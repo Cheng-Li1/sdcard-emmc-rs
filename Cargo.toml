@@ -1,0 +1,13 @@
+[package]
+name = "meson-sdmmc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# No dependencies on std here
+
+[profile.dev]
+panic = "abort"  # For no_std, we need to handle panics manually
+
+[profile.release]
+panic = "abort"
