@@ -1,4 +1,4 @@
-use core::{ffi::c_char, ptr};
+use core::ptr;
 
 const SDIO_BASE: u64 = 0xffe03000; // Base address from DTS
 
@@ -20,36 +20,6 @@ macro_rules! div_round_up {
     ($n:expr, $d:expr) => {
         (($n + $d - 1) / $d)
     };
-}
-
-extern "C" {
-    fn sddf_printf_(format: *const core::ffi::c_char, ...) -> core::ffi::c_int;
-}
-
-const MAX_BUFFER_SIZE: usize = 256;
-
-fn rust_sddf_print(fmt: &str) -> Result<(), &'static str> {
-    let str_len = fmt.len();
-    
-    // Ensure the string fits in the buffer
-    if str_len >= MAX_BUFFER_SIZE {
-        return Err("String too long!");
-    }
-
-    // Initialize buffer with all zeros (automatically null-terminated)
-    let mut buffer: [u8; MAX_BUFFER_SIZE] = [0; MAX_BUFFER_SIZE];
-
-    // Copy the Rust string (as bytes) into the buffer
-    let bytes: &[u8] = fmt.as_bytes();
-    buffer[..bytes.len()].copy_from_slice(bytes);
-
-    // Call the C function with the null-terminated string
-    unsafe {
-        let c_format: *const c_char = buffer.as_ptr() as *const c_char;
-        sddf_printf_(c_format);
-    }
-
-    Ok(())
 }
 
 
@@ -176,5 +146,13 @@ impl SdioRegisters {
         meson_mmc_clk |= clk_div;
 
         self.write_clock(meson_mmc_clk);
+    }
+
+    fn meson_set_ios(&mut self) {
+
+    }
+
+    fn meson_sdmmc_send_cmd(&mut self) {
+        
     }
 }

@@ -1,0 +1,34 @@
+{
+    "rust-analyzer.cargo.extraEnv": {
+        "SEL4_INCLUDE_DIRS": "/home/li/Sel4/microkit-sdk-1.4.1/board/odroidc4/debug/include"
+    },
+    "rust-analyzer.runnables.extraArgs": [
+        "--exclude", "test",
+        "-Z", "build-std=core,alloc,compiler_builtins",
+        "-Z", "build-std-features=compiler-builtins-mem",
+        "--target", "support/targets/aarch64-sel4-microkit-minimal.json"
+    ],
+    "rust-analyzer.runnables.extraEnv": null,
+    "rust-analyzer.cargo.buildScripts.overrideCommand": [
+        "cargo", "check",
+        "--quiet",
+        "--workspace",
+        "--message-format=json",
+        "--keep-going",
+        "--exclude", "test",
+        "-Z", "build-std=core,alloc,compiler_builtins",
+        "-Z", "build-std-features=compiler-builtins-mem",
+        "--target", "support/targets/aarch64-sel4-microkit-minimal.json"
+    ],
+    "rust-analyzer.check.overrideCommand": [
+        "cargo", "check",
+        "--quiet",
+        "--workspace",
+        "--message-format=json",
+        "--keep-going",
+        "--exclude", "test",
+        "-Z", "build-std=core,alloc,compiler_builtins",
+        "-Z", "build-std-features=compiler-builtins-mem",
+        "--target", "support/targets/aarch64-sel4-microkit-minimal.json"
+    ]
+}

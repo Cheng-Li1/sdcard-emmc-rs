@@ -3,23 +3,20 @@
 
 pub mod meson_gx_mmc;
 
-use core::panic::PanicInfo;
+use sel4_microkit::{debug_println, protection_domain, Handler, Infallible};
+
 
 const SDIO_BASE: u64 = 0xffe03000;
 
-/// Entry point for the program. This function must not return.
-#[no_mangle]
-pub extern "C" fn init() -> ! {
-    // Place initialization code here (e.g., setting up peripherals, memory, etc.)
-    
-    // The main loop where your program runs
-    loop {
-        // In a bare-metal environment, your program usually runs indefinitely.
-    }
+#[protection_domain]
+fn init() -> HandlerImpl {
+    debug_println!("Try!");
+    HandlerImpl
 }
 
-/// This function is called on panic, and since there's no OS, it typically just halts the CPU.
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
+struct HandlerImpl;
+
+impl Handler for HandlerImpl {
+    type Error = Infallible;
+    
 }
