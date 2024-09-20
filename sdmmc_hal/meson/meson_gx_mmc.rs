@@ -1,6 +1,7 @@
-use core::{option, ptr};
+use core::ptr;
 
-use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd};
+use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError};
+use sel4_microkit::debug_println;
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
 
@@ -17,6 +18,7 @@ const CLK_CO_PHASE_090: u32 = 1 << 8;
 const CLK_CO_PHASE_180: u32 = 2 << 8;
 const CLK_CO_PHASE_270: u32 = 3 << 8;
 const CLK_TX_PHASE_000: u32 = 0 << 10;
+const CLK_TX_PHASE_180: u32 = 2 << 10;
 const CLK_ALWAYS_ON: u32 = 1 << 24;
 
 macro_rules! div_round_up {
@@ -43,6 +45,17 @@ const MMC_RSP_PRESENT: u32 = 1 << 0;
 const MMC_RSP_136: u32 = 1 << 1;
 const MMC_RSP_CRC: u32 = 1 << 2;
 const MMC_RSP_BUSY: u32 = 1 << 3;
+
+// STATUS register masks and flags
+const STATUS_MASK: u32 = 0xFFFF;               // GENMASK(15, 0)
+const STATUS_ERR_MASK: u32 = 0x1FFF;           // GENMASK(12, 0)
+const STATUS_RXD_ERR_MASK: u32 = 0xFF;         // GENMASK(7, 0)
+const STATUS_TXD_ERR: u32 = 1 << 8;            // BIT(8)
+const STATUS_DESC_ERR: u32 = 1 << 9;           // BIT(9)
+const STATUS_RESP_ERR: u32 = 1 << 10;          // BIT(10)
+const STATUS_RESP_TIMEOUT: u32 = 1 << 11;      // BIT(11)
+const STATUS_DESC_TIMEOUT: u32 = 1 << 12;      // BIT(12)
+const STATUS_END_OF_CHAIN: u32 = 1 << 13;      // BIT(13)
 
 // Configuration constants (assuming based on context)
 const CFG_BL_LEN_MASK: u32 = 0xF << 4; // Bits 4-7
@@ -150,7 +163,7 @@ impl SdioRegisters {
     /// * `mmc_clock` - The desired clock frequency in Hz.
     /// * `is_sm1_soc` - A boolean indicating whether the SoC is an SM1 variant.
     /// * For odorid C4, this is_sm1_soc is true
-    fn meson_mmc_config_clock(&mut self) {
+    pub fn meson_mmc_config_clock(&mut self) {
         // #define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
         let mut meson_mmc_clk:u32 = 0;
 
@@ -159,7 +172,8 @@ impl SdioRegisters {
 	    // f_max = 100000000; /* 100 MHz */
         let clk: u32; 
         let clk_src: u32;
-        let clock_freq: u32 = 4000000;
+        // 400 khz for init the card
+        let clock_freq: u32 = 400000;
         if clock_freq > 16000000 {
             clk = SD_EMMC_CLKSRC_DIV2;
             clk_src = CLK_SRC_DIV2;
@@ -168,7 +182,7 @@ impl SdioRegisters {
             clk_src = CLK_SRC_24M;
         }
 
-        let clk_div = div_round_up!(clk, clk_src);
+        let clk_div = div_round_up!(clk, clock_freq);
         /* 
         * From uboot meson_gx_mmc.c
         * SM1 SoCs doesn't work fine over 50MHz with CLK_CO_PHASE_180
@@ -191,7 +205,7 @@ impl SdioRegisters {
     }
 
     // This function can be seen as a Rust version of meson_mmc_setup_cmd function in uboot
-    fn meson_mmc_set_up_cmd_cfg_and_cfg(&mut self, cmd: SdmmcCmd, data: Option<&MmcData>) {
+    fn meson_mmc_set_up_cmd_cfg_and_cfg(&mut self, cmd: &SdmmcCmd, data: Option<&MmcData>) {
         let mut meson_mmc_cmd: u32 = 0u32;
 
         meson_mmc_cmd |= (cmd.cmdidx & 0x3F) << CMD_CFG_CMD_INDEX_SHIFT;
@@ -235,7 +249,79 @@ impl SdioRegisters {
         unsafe { ptr::write_volatile(&mut self.cmd_cfg, meson_mmc_cmd); }
     }
 
-    fn meson_sdmmc_send_cmd(&mut self, cmd: SdmmcCmd, data: Option<&MmcData>) {
+    pub fn meson_sdmmc_send_cmd(&mut self, cmd: &SdmmcCmd, data: Option<&MmcData>) -> Result<(), SdmmcHalError> {        
+        // It seems that let Some(mmc_data) = data && mmc_data.blocksize != 512
+        // is not stable on this nightly 2024.05.01 compiler
+        if let Some(mmc_data) = data {
+            if mmc_data.blocksize != 512 {
+                return Err(SdmmcHalError::EINVAL);
+            }
+        }
+
+        // Stop data transfer
+        unsafe { ptr::write_volatile(&mut self.start, 0); }
         
+        self.meson_mmc_set_up_cmd_cfg_and_cfg(&cmd, data);
+        
+        // Reset status register before executing the cmd
+        unsafe { ptr::write_volatile(&mut self.status, STATUS_MASK); }
+
+        // For testing
+        // unsafe { ptr::write_volatile(&mut self.cmd_rsp, 0); }
+
+        unsafe { ptr::write_volatile(&mut self.cmd_arg, cmd.cmdarg); }
+
+        Ok(())
+    }
+
+    fn meson_read_response(&self, cmd: &mut SdmmcCmd) {
+        let [rsp0, rsp1, rsp2, rsp3] = &mut cmd.response;
+
+        // Assign values by reading the respective registers
+        if cmd.resp_type & MMC_RSP_136 != 0 {
+            unsafe {
+                // Yes, this is in a reverse order as rsp0 and self.cmd_rsp3 is the least significant
+                // Check uboot read response code for more details
+                *rsp0 = ptr::read_volatile(&self.cmd_rsp3);
+                *rsp1 = ptr::read_volatile(&self.cmd_rsp2);
+                *rsp2 = ptr::read_volatile(&self.cmd_rsp1);
+                *rsp3 = ptr::read_volatile(&self.cmd_rsp);
+            }
+            debug_println!("Meson received 4 response back!");
+        } else if cmd.resp_type & MMC_RSP_PRESENT != 0 {
+            unsafe { 
+                *rsp0 = ptr::read_volatile(&self.cmd_rsp);
+                debug_println!("Meson response value: {:#034b} (binary), {:#X} (hex)", *rsp0, *rsp0);
+                debug_println!("Meson received 1 response back!");
+            }
+        }
+        debug_println!("Meson do not receive response!");
+    }
+
+    pub fn meson_sdmmc_receive_response(&self, cmd: &mut SdmmcCmd) -> Result<(), SdmmcHalError> {
+        let status: u32;
+        unsafe { status = ptr::read_volatile(&self.status); }
+
+        debug_println!("Meson status value: {:#034b} (binary), {:#X} (hex)", status, status);
+
+        self.meson_read_response(cmd);
+
+        if (status & STATUS_END_OF_CHAIN) == 0 {
+            return Err(SdmmcHalError::EBUSY);
+        }
+
+        if (status & STATUS_RESP_TIMEOUT) != 0 {
+            return Err(SdmmcHalError::ETIMEDOUT);
+        }
+        
+        let mut return_val: Result<(), SdmmcHalError> = Ok(());
+
+        if (status & STATUS_ERR_MASK) != 0 {
+            return_val = Err(SdmmcHalError::EIO);
+        }
+
+        self.meson_read_response(cmd);
+
+        return_val
     }
 }

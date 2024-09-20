@@ -3,6 +3,7 @@
 
 use sdmmc_hal::meson_gx_mmc::SdioRegisters;
 
+use sdmmc_protocol::sdmmc::{SdmmcCmd, SdmmcHalError, MMC_RSP_NONE, MMC_RSP_R7};
 use sel4_microkit::{debug_println, protection_domain, Handler, Infallible};
 
 const SDMMC_BASE_ADDR: *mut SdioRegisters = 0xffe05000 as *mut SdioRegisters;
@@ -10,11 +11,29 @@ const SDMMC_BASE_ADDR: *mut SdioRegisters = 0xffe05000 as *mut SdioRegisters;
 #[protection_domain]
 fn init() -> HandlerImpl {
     debug_println!("Driver init!");
-    let clock_register;
-    let mut point_addr;
-    let cfg_register;
+    let clock_register: u32;
+    let mut point_addr: *const u32;
+    let cfg_register: u32;
+    let mut cmd: SdmmcCmd;
+
+    let mut cmd0 = SdmmcCmd {
+        cmdidx: 0,
+        resp_type: MMC_RSP_NONE,
+        cmdarg: 0,
+        response: [0; 4],
+    };
+
+    let mut cmd8 = SdmmcCmd {
+        cmdidx: 8,
+        resp_type: MMC_RSP_R7,
+        cmdarg: 0x000001AA, // Voltage supply and check pattern
+        response: [0; 4],
+    };
+
     unsafe {
         let sdmmc = &mut *SDMMC_BASE_ADDR;
+
+        sdmmc.meson_mmc_config_clock();
         
         // Read the value from the clock register
         clock_register = sdmmc.read_clock(); // Assuming this function returns u32
@@ -23,6 +42,17 @@ fn init() -> HandlerImpl {
         // Print the pointer address
         debug_println!("Clock register address: {:p}", point_addr);
 
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
+        parse_clock(clock_register);
         parse_clock(clock_register);
 
         cfg_register = sdmmc.read_cfg();
@@ -33,7 +63,57 @@ fn init() -> HandlerImpl {
 
         parse_cfg(cfg_register);
 
+        let _ = sdmmc.meson_sdmmc_send_cmd(&cmd0, None);
+
+        debug_println!("CMD0 sent: GO_IDLE_STATE");
+
+        let _ = sdmmc.meson_sdmmc_send_cmd(&cmd8, None);
+
+        let mut attempts: u64 = 0;
+
+        loop {
+            attempts += 1;
+            debug_println!("Polling attempt {}", attempts);
+
+            match sdmmc.meson_sdmmc_receive_response(&mut cmd8) {
+                Ok(_) => {
+                    debug_println!("Response received after {} attempts", attempts);
+                    // Process the CMD8 response
+                    let cmd8_response = cmd8.response[0];
+                    debug_println!("CMD8 Response: {:#034b} (binary), {:#X} (hex)", cmd8_response, cmd8_response);
+
+                    // Validate the response
+                    if (cmd8_response & 0xFF) != 0xAA {
+                        debug_println!("CMD8 Error Response: {:#034b} (binary), {:#X} (hex)", cmd8_response, cmd8_response);
+                        debug_println!("Invalid CMD8 response check pattern.");
+                    }
+
+                    // Optionally, check voltage acceptance
+                    let voltage_accepted = (cmd8_response >> 8) & 0xF;
+                    if voltage_accepted != 0x1 {
+                        debug_println!("CMD8 Error Response: {:#034b} (binary), {:#X} (hex)", cmd8_response, cmd8_response);
+                        debug_println!("Unsupported voltage range.");
+                    }
+                },
+                Err(SdmmcHalError::EBUSY) => {
+                    debug_println!("Attempt {}: STATUS_END_OF_CHAIN not set. Card is busy.", attempts);
+                },
+                Err(SdmmcHalError::ETIMEDOUT) => {
+                    debug_println!("Attempt {}: STATUS_RESP_TIMEOUT set.", attempts);
+                },
+                Err(_e) => {
+                    debug_println!("Attempt {}: Received error", attempts);
+                },
+            }
+
+            // Check for overall timeout
+            if attempts > 200 {
+                debug_println!("Polling timed out after {} attempts.", attempts);
+                break;
+            }
+        }
     }
+
     HandlerImpl
 }
 
