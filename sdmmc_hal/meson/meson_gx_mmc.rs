@@ -1,8 +1,11 @@
-use core::ptr;
+use core::{option, ptr};
 
-const SDIO_BASE: u64 = 0xffe03000; // Base address from DTS
+use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd};
+
+const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
 
 // Constants translated from the C version
+// Clock related constant
 const SD_EMMC_CLKSRC_24M: u32 = 24000000;       // 24 MHz
 const SD_EMMC_CLKSRC_DIV2: u32 = 1000000000;    // 1 GHz
 
@@ -22,6 +25,33 @@ macro_rules! div_round_up {
     };
 }
 
+// CMD_CFG constants
+const CMD_CFG_CMD_INDEX_SHIFT: u32 = 24;
+const CMD_CFG_RESP_128: u32 = 1 << 21;
+const CMD_CFG_R1B: u32 = 1 << 10;
+const CMD_CFG_RESP_NOCRC: u32 = 1 << 20;
+const CMD_CFG_NO_RESP: u32 = 1 << 16;
+const CMD_CFG_DATA_WR: u32 = 1 << 19;
+const CMD_CFG_DATA_IO: u32 = 1 << 18;
+const CMD_CFG_BLOCK_MODE: u32 = 1 << 9;
+const CMD_CFG_TIMEOUT_4S: u32 = 12 << 12;
+const CMD_CFG_OWNER: u32 = 1 << 31;
+const CMD_CFG_END_OF_CHAIN: u32 = 1 << 11;
+
+// MMC_RSP constants
+const MMC_RSP_PRESENT: u32 = 1 << 0;
+const MMC_RSP_136: u32 = 1 << 1;
+const MMC_RSP_CRC: u32 = 1 << 2;
+const MMC_RSP_BUSY: u32 = 1 << 3;
+
+// Configuration constants (assuming based on context)
+const CFG_BL_LEN_MASK: u32 = 0xF << 4; // Bits 4-7
+const CFG_BL_LEN_SHIFT: u32 = 4;
+
+fn ilog2(x: u32) -> u32 {
+    assert!(x > 0);
+    31 - x.leading_zeros()
+}
 
 // Structure representing the SDIO controller's registers
 /* 
@@ -57,7 +87,7 @@ macro_rules! div_round_up {
  *  
  */
 #[repr(C)]
-struct SdioRegisters {
+pub struct SdioRegisters {
     pub clock: u32,           // 0x00: Clock control register
     _reserved0: [u32; 15],    // Padding for other unused registers (0x04 - 0x3C)
     pub start: u32,           // 0x40: Start register
@@ -81,7 +111,7 @@ impl SdioRegisters {
     // The current hardware layer assumes that the sd card is being powered on by uboot, not by the driver
     // fn powerup(&mut self) {}
     // Read a value from the clock register
-    fn read_clock(&mut self) -> u32 {
+    pub fn read_clock(&mut self) -> u32 {
         unsafe { ptr::read_volatile(&mut self.clock) }
     }
 
@@ -94,6 +124,10 @@ impl SdioRegisters {
         unsafe { ptr::read_volatile(&self.status) }
     }
 
+    pub fn read_cfg(&self) -> u32 {
+        unsafe { ptr::read_volatile(&self.cfg) }
+    }
+
     // Configure the command register
     fn set_cmd_cfg(&mut self, value: u32) {
         unsafe {
@@ -102,7 +136,11 @@ impl SdioRegisters {
     }
     // Add more methods for interacting with the SDIO registers as needed
     fn meson_mmc_request(&mut self, value: u32) {
-        
+        unsafe {
+            ptr::write_volatile(&mut self.cmd_cfg, value);
+
+        }
+
     }
 
     /// Configures the SDIO clock based on the requested clock frequency and SoC type.
@@ -149,10 +187,55 @@ impl SdioRegisters {
     }
 
     fn meson_set_ios(&mut self) {
-
+        
     }
 
-    fn meson_sdmmc_send_cmd(&mut self) {
+    // This function can be seen as a Rust version of meson_mmc_setup_cmd function in uboot
+    fn meson_mmc_set_up_cmd_cfg_and_cfg(&mut self, cmd: SdmmcCmd, data: Option<&MmcData>) {
+        let mut meson_mmc_cmd: u32 = 0u32;
+
+        meson_mmc_cmd |= (cmd.cmdidx & 0x3F) << CMD_CFG_CMD_INDEX_SHIFT;
+
+        if cmd.resp_type & MMC_RSP_PRESENT != 0 {
+            if cmd.resp_type & MMC_RSP_136 != 0 {
+                meson_mmc_cmd |= CMD_CFG_RESP_128;
+            }
+
+            if cmd.resp_type & MMC_RSP_BUSY != 0 {
+                meson_mmc_cmd |= CMD_CFG_R1B;
+            }
+
+            if cmd.resp_type & MMC_RSP_CRC == 0 {
+                meson_mmc_cmd |= CMD_CFG_RESP_NOCRC;
+            }
+        }
+        else {
+            meson_mmc_cmd |= CMD_CFG_NO_RESP;
+        }
+
+        if let Some(data) = data {
+            let mut cfg: u32 = unsafe { ptr::read_volatile(&self.cfg) };
+
+            cfg &= !CFG_BL_LEN_MASK;
+
+            cfg |= ilog2(data.blocksize) << CFG_BL_LEN_SHIFT;
+            
+            // This value should only be 9
+            assert!(ilog2(data.blocksize) == 9);
+
+            unsafe { ptr::write_volatile(&mut self.cfg, cfg); };
+            
+            if let MmcDataFlag::SdmmcDataWrite = data.flags {
+                meson_mmc_cmd |= CMD_CFG_DATA_WR;
+            }
+            
+            meson_mmc_cmd |= CMD_CFG_DATA_IO | CMD_CFG_BLOCK_MODE | data.blocks;
+        }
+
+        unsafe { ptr::write_volatile(&mut self.cmd_cfg, meson_mmc_cmd); }
+    }
+
+    fn meson_sdmmc_send_cmd(&mut self, cmd: SdmmcCmd, data: Option<&MmcData>) {
         
     }
 }

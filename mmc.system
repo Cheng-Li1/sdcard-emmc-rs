@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Copyright 2024, UNSW
+    SPDX-License-Identifier: BSD-2-Clause
+-->
+<system>
+    <memory_region name="sdmmc" size="0x1000" phys_addr="0xffe05000" />
+
+    <protection_domain name="sdmmc_driver" priority="100" >
+        <program_image path="sdmmc_driver.elf" />
+        <map mr="sdmmc" vaddr="0xffe05000" perms="rw" cached="false" />
+    </protection_domain>
+</system>

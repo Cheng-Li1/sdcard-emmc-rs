@@ -1,7 +1,9 @@
 [package]
-name = "meson-sdmmc"
+name = "sdmmc_driver"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 sel4-microkit = { path = "rust-sel4/crates/sel4-microkit" }
+sdmmc_hal = { path = "sdmmc_hal/meson" }
+sdmmc_protocol = { path = "sdmmc_protocol" }
