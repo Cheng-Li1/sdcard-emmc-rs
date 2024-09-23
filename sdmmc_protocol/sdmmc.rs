@@ -9,8 +9,7 @@ pub struct MmcData {
     pub blocksize: u32,
     pub blocks: u32,
     pub flags: MmcDataFlag ,
-    pub dest: *const u64,
-    pub src: *const u64,
+    pub addr: u32,
 }
 
 pub enum MmcDataFlag {

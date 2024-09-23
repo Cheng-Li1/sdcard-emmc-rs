@@ -61,6 +61,10 @@ const STATUS_END_OF_CHAIN: u32 = 1 << 13;      // BIT(13)
 const CFG_BL_LEN_MASK: u32 = 0xF << 4; // Bits 4-7
 const CFG_BL_LEN_SHIFT: u32 = 4;
 
+// const VALID_DMA_ADDR_LOWER: u32 = 0x2000000;
+// const VALID_DMA_ADDR_UPPER: u32 = 0x10000000;
+// const VALID_DMA_ADDR_MASK: u32 = 0x80000003;
+
 fn ilog2(x: u32) -> u32 {
     assert!(x > 0);
     31 - x.leading_zeros()
@@ -246,28 +250,36 @@ impl SdioRegisters {
             meson_mmc_cmd |= CMD_CFG_DATA_IO | CMD_CFG_BLOCK_MODE | data.blocks;
         }
 
+        meson_mmc_cmd |= CMD_CFG_TIMEOUT_4S | CMD_CFG_OWNER | CMD_CFG_END_OF_CHAIN;
+
         unsafe { ptr::write_volatile(&mut self.cmd_cfg, meson_mmc_cmd); }
     }
 
     pub fn meson_sdmmc_send_cmd(&mut self, cmd: &SdmmcCmd, data: Option<&MmcData>) -> Result<(), SdmmcHalError> {        
         // It seems that let Some(mmc_data) = data && mmc_data.blocksize != 512
         // is not stable on this nightly 2024.05.01 compiler
+        // Set up the data addr
+        let mut data_addr: u32 = 0u32;
         if let Some(mmc_data) = data {
             if mmc_data.blocksize != 512 {
                 return Err(SdmmcHalError::EINVAL);
             }
+            // Depend on the flag and hardware, the cache should be flushed accordingly
+            data_addr = mmc_data.addr;
         }
 
         // Stop data transfer
-        unsafe { ptr::write_volatile(&mut self.start, 0); }
+        unsafe { ptr::write_volatile(&mut self.start, 0u32); }
+
+        unsafe { ptr::write_volatile(&mut self.cmd_dat, data_addr); }
         
         self.meson_mmc_set_up_cmd_cfg_and_cfg(&cmd, data);
-        
+
         // Reset status register before executing the cmd
         unsafe { ptr::write_volatile(&mut self.status, STATUS_MASK); }
 
         // For testing
-        // unsafe { ptr::write_volatile(&mut self.cmd_rsp, 0); }
+        unsafe { ptr::write_volatile(&mut self.cmd_rsp, 0u32); }
 
         unsafe { ptr::write_volatile(&mut self.cmd_arg, cmd.cmdarg); }
 
@@ -295,7 +307,6 @@ impl SdioRegisters {
                 debug_println!("Meson received 1 response back!");
             }
         }
-        debug_println!("Meson do not receive response!");
     }
 
     pub fn meson_sdmmc_receive_response(&self, cmd: &mut SdmmcCmd) -> Result<(), SdmmcHalError> {

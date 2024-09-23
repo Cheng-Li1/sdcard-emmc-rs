@@ -16,7 +16,7 @@ fn init() -> HandlerImpl {
     let cfg_register: u32;
     let mut cmd: SdmmcCmd;
 
-    let mut cmd0 = SdmmcCmd {
+    let cmd0 = SdmmcCmd {
         cmdidx: 0,
         resp_type: MMC_RSP_NONE,
         cmdarg: 0,
@@ -94,6 +94,7 @@ fn init() -> HandlerImpl {
                         debug_println!("CMD8 Error Response: {:#034b} (binary), {:#X} (hex)", cmd8_response, cmd8_response);
                         debug_println!("Unsupported voltage range.");
                     }
+                    break;
                 },
                 Err(SdmmcHalError::EBUSY) => {
                     debug_println!("Attempt {}: STATUS_END_OF_CHAIN not set. Card is busy.", attempts);
@@ -107,7 +108,7 @@ fn init() -> HandlerImpl {
             }
 
             // Check for overall timeout
-            if attempts > 200 {
+            if attempts > 5 {
                 debug_println!("Polling timed out after {} attempts.", attempts);
                 break;
             }
