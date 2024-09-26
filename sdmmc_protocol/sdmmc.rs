@@ -102,13 +102,16 @@ enum CmdState {
     WaitingForResponse,
     // Error encountered
     Error,
+    // Finished
+    Finished,
 }
 
 pub struct SdmmcCmdFuture<'a, 'b> {
     hardware: &'a mut dyn SdmmcHardware,
-    cmd: &'b SdmmcCmd,
+    cmd: &'b mut SdmmcCmd,
     data: Option<&'b MmcData>,
     state: CmdState,
+    res: Result<(), SdmmcHalError>,
 }
 
 /// SdmmcCmdFuture serves as the basic building block for async fn above
@@ -121,12 +124,43 @@ impl<'a, 'b> Future for SdmmcCmdFuture<'a, 'b> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.state {
             CmdState::NotSend => {
-                let cmd = self.cmd;
-                let data = self.data;
-                let res = self.hardware.sdmmc_send_command(cmd, data);
+                let res;
+                {
+                    let this = self.as_mut().get_mut();
+
+                    // Now, you can pass `&mut SdmmcCmd` to `sdmmc_send_command`
+                    // let cmd = &mut *this.cmd; // Get a mutable reference to `cmd`
+                    let cmd = & *this.cmd;
+                    let data = this.data;
+                    res = this.hardware.sdmmc_send_command(cmd, data);
+                }
+                if let Ok(()) = res {
+                    self.state = CmdState::WaitingForResponse;
+                    return Poll::Pending;
+                } else {
+                    self.state = CmdState::Error;
+                    return Poll::Ready(res);
+                }
             }
-            CmdState::WaitingForResponse => todo!(),
+            CmdState::WaitingForResponse => {
+                let res;
+                {
+                    let this = self.as_mut().get_mut();
+                    let cmd: &mut SdmmcCmd = this.cmd;
+                    let hardware: &mut dyn SdmmcHardware = this.hardware;
+                    res = hardware.sdmmc_receive_response(cmd);
+                }
+                if let Ok(()) = res {
+                    self.state = CmdState::Finished;
+                    return Poll::Ready(res);
+                } else {
+                    self.state = CmdState::Error;
+                    return Poll::Ready(res);
+                }
+
+            }
             CmdState::Error => todo!(),
+            CmdState::Finished => todo!(),
         }
         Poll::Ready(Ok(()))
     }
