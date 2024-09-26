@@ -125,6 +125,11 @@ pub struct SdioRegisters {
 }
 
 impl SdioRegisters {
+    /// This new use unsafe under the hood, ensure correct memory page is mapped into
+    /// the respective virtual memory address and do not do things stupid
+    pub fn new() -> &'static mut SdioRegisters {
+        unsafe { &mut *(SDIO_BASE as *mut SdioRegisters) }
+    }
     // The current hardware layer assumes that the sd card is being powered on by uboot, not by the driver
     // fn powerup(&mut self) {}
     // Read a value from the clock register

@@ -3,18 +3,42 @@
 
 use sdmmc_hal::meson_gx_mmc::SdioRegisters;
 
-use sdmmc_protocol::sdmmc::{SdmmcCmd, SdmmcHalError, MMC_RSP_NONE, MMC_RSP_R7};
-use sel4_microkit::{debug_println, protection_domain, Handler, Infallible};
+use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError, MMC_RSP_NONE, MMC_RSP_R1, MMC_RSP_R7};
+use sel4_microkit::{debug_print, debug_println, protection_domain, Handler, Infallible};
 
 const SDMMC_BASE_ADDR: *mut SdioRegisters = 0xffe05000 as *mut SdioRegisters;
+const DATA_ADDR: *mut u8 = 0x50000000 as *mut u8;
+
+fn print_one_block(ptr: *const u8) {
+    unsafe {
+        // Iterate over the 512 bytes and print each one in hexadecimal format
+        for i in 0..512 {
+            let byte = *ptr.add(i);
+            if i % 16 == 0 {
+                debug_print!("\n{:04x}: ", i);
+            }
+            debug_print!("{:02x} ", byte);
+        }
+        debug_println!();
+    }
+}
 
 #[protection_domain]
 fn init() -> HandlerImpl {
     debug_println!("Driver init!");
+    let sdmmc = SdioRegisters::new();
     let clock_register: u32;
     let mut point_addr: *const u32;
     let cfg_register: u32;
-    let mut cmd: SdmmcCmd;
+
+    // Read request
+    let cmd17 = SdmmcCmd {
+        cmdidx: 17,
+        resp_type: MMC_RSP_R1,
+        // Read start from sector 0
+        cmdarg: 0,
+        response: [0; 4],
+    };
 
     let cmd0 = SdmmcCmd {
         cmdidx: 0,
@@ -30,6 +54,60 @@ fn init() -> HandlerImpl {
         response: [0; 4],
     };
 
+        let data_addr = DATA_ADDR;
+        let block_data: MmcData = MmcData {
+            blocksize: 512,
+            blocks: 1,
+            flags: MmcDataFlag::SdmmcDataRead,
+            addr: 0x50000000,
+        };
+        debug_println!("Print out current data in data_addr: ");
+        print_one_block(DATA_ADDR);
+        debug_println!("Now we try to send a read request");
+        let error: Result<(), SdmmcHalError> = sdmmc.meson_sdmmc_send_cmd(&cmd17, Some(&block_data));
+        if let Err(error_or_not) = error {
+            debug_println!("Send request failed!");
+        }
+        let mut attempts: u64 = 0;
+        loop {
+            attempts += 1;
+            debug_println!("Polling attempt {}", attempts);
+
+            match sdmmc.meson_sdmmc_receive_response(&mut cmd8) {
+                Ok(_) => {
+                    debug_println!("Response received after {} attempts", attempts);
+                    // Process the CMD8 response
+                    let cmd_response = cmd17.response[0];
+                    debug_println!("CMD Response: {:#034b} (binary), {:#X} (hex)", cmd_response, cmd_response);
+
+                    debug_println!("Content in the buffer after read: ");
+
+                    print_one_block(DATA_ADDR);
+
+                    break;
+                },
+                Err(SdmmcHalError::EBUSY) => {
+                    debug_println!("Attempt {}: STATUS_END_OF_CHAIN not set. Card is busy.", attempts);
+                },
+                Err(SdmmcHalError::ETIMEDOUT) => {
+                    debug_println!("Attempt {}: STATUS_RESP_TIMEOUT set.", attempts);
+                },
+                Err(_e) => {
+                    debug_println!("Attempt {}: Received error", attempts);
+                },
+            }
+
+            // Check for overall timeout
+            if attempts > 20 {
+                debug_println!("Polling timed out after {} attempts.", attempts);
+                break;
+            }
+        }
+
+
+
+// Those code are for testing CMD0 and CMD8
+/* 
     unsafe {
         let sdmmc = &mut *SDMMC_BASE_ADDR;
 
@@ -114,7 +192,7 @@ fn init() -> HandlerImpl {
             }
         }
     }
-
+*/
     HandlerImpl
 }
 
