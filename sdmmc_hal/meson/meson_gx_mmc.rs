@@ -291,8 +291,8 @@ impl SdioRegisters {
         Ok(())
     }
 
-    fn meson_read_response(&self, cmd: &mut SdmmcCmd) {
-        let [rsp0, rsp1, rsp2, rsp3] = &mut cmd.response;
+    fn meson_read_response(&self, cmd: &SdmmcCmd, response: &mut [u32; 4]) {
+        let [rsp0, rsp1, rsp2, rsp3] = response;
 
         // Assign values by reading the respective registers
         if cmd.resp_type & MMC_RSP_136 != 0 {
@@ -314,13 +314,11 @@ impl SdioRegisters {
         }
     }
 
-    pub fn meson_sdmmc_receive_response(&self, cmd: &mut SdmmcCmd) -> Result<(), SdmmcHalError> {
+    pub fn meson_sdmmc_receive_response(&self, cmd: &SdmmcCmd, response: &mut [u32; 4]) -> Result<(), SdmmcHalError> {
         let status: u32;
         unsafe { status = ptr::read_volatile(&self.status); }
 
         debug_println!("Meson status value: {:#034b} (binary), {:#X} (hex)", status, status);
-
-        self.meson_read_response(cmd);
 
         if (status & STATUS_END_OF_CHAIN) == 0 {
             return Err(SdmmcHalError::EBUSY);
@@ -336,7 +334,7 @@ impl SdioRegisters {
             return_val = Err(SdmmcHalError::EIO);
         }
 
-        self.meson_read_response(cmd);
+        self.meson_read_response(cmd, response);
 
         return_val
     }

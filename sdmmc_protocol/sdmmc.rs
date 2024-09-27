@@ -1,10 +1,9 @@
-use core::{future::Future, pin::Pin, task::{Context, Poll}};
+use core::{future::Future, pin::Pin, task::{Context, Poll, Waker}};
 
 pub struct SdmmcCmd {
     pub cmdidx: u32,
     pub resp_type: u32,
     pub cmdarg: u32,
-    pub response: [u32; 4],
 }
 
 pub struct MmcData {
@@ -25,6 +24,8 @@ pub enum SdmmcHalError {
     EINVAL,
     EIO,
     ENOTIMPLEMENTED,
+    // This error should not be triggered unless there are bugs in program
+    EUNDEFINED,
 }
 
 // Define the MMC response flags
@@ -60,7 +61,7 @@ pub trait SdmmcHardware {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
-    fn sdmmc_receive_response(&self, cmd: &mut SdmmcCmd) -> Result<(), SdmmcHalError> {
+    fn sdmmc_receive_response(&self, cmd: &SdmmcCmd, response: &mut [u32; 4]) -> Result<(), SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
@@ -97,7 +98,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
 enum CmdState {
     // Currently sending the command
-    NotSend,
+    // State at the start
+    NotSent,
     // Waiting for the response
     WaitingForResponse,
     // Error encountered
@@ -106,32 +108,56 @@ enum CmdState {
     Finished,
 }
 
-pub struct SdmmcCmdFuture<'a, 'b> {
+pub struct SdmmcCmdFuture<'a, 'b, 'c> {
     hardware: &'a mut dyn SdmmcHardware,
-    cmd: &'b mut SdmmcCmd,
+    cmd: &'b SdmmcCmd,
     data: Option<&'b MmcData>,
+    waker: Option<Waker>,
     state: CmdState,
-    res: Result<(), SdmmcHalError>,
+    response: &'c mut [u32; 4],
 }
+
+impl<'a, 'b, 'c> SdmmcCmdFuture<'a, 'b, 'c> {
+    pub fn new(
+        hardware: &'a mut dyn SdmmcHardware,
+        cmd: &'b SdmmcCmd,
+        data: Option<&'b MmcData>,
+        response: &'c mut [u32; 4]) -> SdmmcCmdFuture<'a, 'b, 'c> {
+        SdmmcCmdFuture{
+            hardware,
+            cmd,
+            data,
+            waker: None,
+            state: CmdState::NotSent,
+            response,
+        }
+    }
+}
+
 
 /// SdmmcCmdFuture serves as the basic building block for async fn above
 /// In the context of Sdmmc device, since the requests are executed linearly under the hood
 /// We actually do not need an executor to execute the request
 /// The context can be ignored unless someone insist to use an executor for the requests
-impl<'a, 'b> Future for SdmmcCmdFuture<'a, 'b> {
+/// So for now, the context is being stored in waker but this waker will not be used
+/// Beside, we are in no std environment and can barely use any locks
+impl<'a, 'b, 'c> Future for SdmmcCmdFuture<'a, 'b, 'c> {
     type Output = Result<(), SdmmcHalError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.state {
-            CmdState::NotSend => {
-                let res;
-                {
-                    let this = self.as_mut().get_mut();
+        // As I have said above, this waker is not being used so it do not need to be shared data
+        // But store the waker provided anyway
+        self.waker = Some(cx.waker().clone());
 
-                    // Now, you can pass `&mut SdmmcCmd` to `sdmmc_send_command`
-                    // let cmd = &mut *this.cmd; // Get a mutable reference to `cmd`
-                    let cmd = & *this.cmd;
-                    let data = this.data;
+        match self.state {
+            CmdState::NotSent => {
+                let res: Result<(), SdmmcHalError>;
+                {
+                    let this: &mut SdmmcCmdFuture<'a, 'b, 'c> = self.as_mut().get_mut();
+
+                    // Now, you can pass `&SdmmcCmd` to `sdmmc_send_command`
+                    let cmd: &SdmmcCmd = this.cmd;
+                    let data: Option<&MmcData> = this.data;
                     res = this.hardware.sdmmc_send_command(cmd, data);
                 }
                 if let Ok(()) = res {
@@ -145,23 +171,24 @@ impl<'a, 'b> Future for SdmmcCmdFuture<'a, 'b> {
             CmdState::WaitingForResponse => {
                 let res;
                 {
-                    let this = self.as_mut().get_mut();
-                    let cmd: &mut SdmmcCmd = this.cmd;
+                    let this: &mut SdmmcCmdFuture<'a, 'b, 'c> = self.as_mut().get_mut();
+                    let cmd: &SdmmcCmd = this.cmd;
+                    let response: &mut [u32; 4] = this.response;
                     let hardware: &mut dyn SdmmcHardware = this.hardware;
-                    res = hardware.sdmmc_receive_response(cmd);
+                    res = hardware.sdmmc_receive_response(cmd, response);
                 }
-                if let Ok(()) = res {
+                if let Err(SdmmcHalError::EBUSY) = res {
+                    return Poll::Pending;
+                } else if let Ok(()) = res {
                     self.state = CmdState::Finished;
                     return Poll::Ready(res);
                 } else {
                     self.state = CmdState::Error;
                     return Poll::Ready(res);
                 }
-
             }
-            CmdState::Error => todo!(),
-            CmdState::Finished => todo!(),
+            CmdState::Error => return Poll::Ready(Err(SdmmcHalError::EUNDEFINED)),
+            CmdState::Finished => return Poll::Ready(Err(SdmmcHalError::EUNDEFINED)),
         }
-        Poll::Ready(Ok(()))
     }
 }

@@ -30,6 +30,7 @@ fn init() -> HandlerImpl {
     let clock_register: u32;
     let mut point_addr: *const u32;
     let cfg_register: u32;
+    let mut resp: [u32; 4] = [0; 4];
 
     // Read request
     let cmd17 = SdmmcCmd {
@@ -37,21 +38,18 @@ fn init() -> HandlerImpl {
         resp_type: MMC_RSP_R1,
         // Read start from sector 0
         cmdarg: 0,
-        response: [0; 4],
     };
 
     let cmd0 = SdmmcCmd {
         cmdidx: 0,
         resp_type: MMC_RSP_NONE,
         cmdarg: 0,
-        response: [0; 4],
     };
 
     let mut cmd8 = SdmmcCmd {
         cmdidx: 8,
         resp_type: MMC_RSP_R7,
         cmdarg: 0x000001AA, // Voltage supply and check pattern
-        response: [0; 4],
     };
 
         let data_addr = DATA_ADDR;
@@ -73,11 +71,11 @@ fn init() -> HandlerImpl {
             attempts += 1;
             debug_println!("Polling attempt {}", attempts);
 
-            match sdmmc.meson_sdmmc_receive_response(&mut cmd8) {
+            match sdmmc.meson_sdmmc_receive_response(&cmd8, &mut resp) {
                 Ok(_) => {
                     debug_println!("Response received after {} attempts", attempts);
                     // Process the CMD8 response
-                    let cmd_response = cmd17.response[0];
+                    let cmd_response = resp[0];
                     debug_println!("CMD Response: {:#034b} (binary), {:#X} (hex)", cmd_response, cmd_response);
 
                     debug_println!("Content in the buffer after read: ");
