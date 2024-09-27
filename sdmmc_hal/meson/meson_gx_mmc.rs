@@ -1,6 +1,6 @@
 use core::ptr;
 
-use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError};
+use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError, SdmmcHardware};
 use sel4_microkit::debug_println;
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
@@ -104,7 +104,7 @@ fn ilog2(x: u32) -> u32 {
  *  
  */
 #[repr(C)]
-pub struct SdioRegisters {
+pub struct MesonSdmmcRegisters {
     pub clock: u32,           // 0x00: Clock control register
     _reserved0: [u32; 15],    // Padding for other unused registers (0x04 - 0x3C)
     pub start: u32,           // 0x40: Start register
@@ -124,45 +124,13 @@ pub struct SdioRegisters {
     // Add other registers as needed
 }
 
-impl SdioRegisters {
+impl Unpin for MesonSdmmcRegisters {}
+
+impl MesonSdmmcRegisters {
     /// This new use unsafe under the hood, ensure correct memory page is mapped into
     /// the respective virtual memory address and do not do things stupid
-    pub fn new() -> &'static mut SdioRegisters {
-        unsafe { &mut *(SDIO_BASE as *mut SdioRegisters) }
-    }
-    // The current hardware layer assumes that the sd card is being powered on by uboot, not by the driver
-    // fn powerup(&mut self) {}
-    // Read a value from the clock register
-    pub fn read_clock(&mut self) -> u32 {
-        unsafe { ptr::read_volatile(&mut self.clock) }
-    }
-
-    fn write_clock(&mut self, value: u32) {
-        unsafe { ptr::write_volatile(&mut self.clock, value); }
-    }
-
-    // Read a value from the status register
-    fn read_status(&self) -> u32 {
-        unsafe { ptr::read_volatile(&self.status) }
-    }
-
-    pub fn read_cfg(&self) -> u32 {
-        unsafe { ptr::read_volatile(&self.cfg) }
-    }
-
-    // Configure the command register
-    fn set_cmd_cfg(&mut self, value: u32) {
-        unsafe {
-            ptr::write_volatile(&mut self.cmd_cfg, value);
-        }
-    }
-    // Add more methods for interacting with the SDIO registers as needed
-    fn meson_mmc_request(&mut self, value: u32) {
-        unsafe {
-            ptr::write_volatile(&mut self.cmd_cfg, value);
-
-        }
-
+    pub fn new() -> &'static mut MesonSdmmcRegisters {
+        unsafe { &mut *(SDIO_BASE as *mut MesonSdmmcRegisters) }
     }
 
     /// Configures the SDIO clock based on the requested clock frequency and SoC type.
@@ -206,11 +174,7 @@ impl SdioRegisters {
         meson_mmc_clk |= clk_src;
         meson_mmc_clk |= clk_div;
 
-        self.write_clock(meson_mmc_clk);
-    }
-
-    fn meson_set_ios(&mut self) {
-        
+        unsafe { ptr::write_volatile(&mut self.clock, meson_mmc_clk); }
     }
 
     // This function can be seen as a Rust version of meson_mmc_setup_cmd function in uboot
@@ -260,7 +224,32 @@ impl SdioRegisters {
         unsafe { ptr::write_volatile(&mut self.cmd_cfg, meson_mmc_cmd); }
     }
 
-    pub fn meson_sdmmc_send_cmd(&mut self, cmd: &SdmmcCmd, data: Option<&MmcData>) -> Result<(), SdmmcHalError> {        
+    fn meson_read_response(&self, cmd: &SdmmcCmd, response: &mut [u32; 4]) {
+        let [rsp0, rsp1, rsp2, rsp3] = response;
+
+        // Assign values by reading the respective registers
+        if cmd.resp_type & MMC_RSP_136 != 0 {
+            unsafe {
+                // Yes, this is in a reverse order as rsp0 and self.cmd_rsp3 is the least significant
+                // Check uboot read response code for more details
+                *rsp0 = ptr::read_volatile(&self.cmd_rsp3);
+                *rsp1 = ptr::read_volatile(&self.cmd_rsp2);
+                *rsp2 = ptr::read_volatile(&self.cmd_rsp1);
+                *rsp3 = ptr::read_volatile(&self.cmd_rsp);
+            }
+            debug_println!("Meson received 4 response back!");
+        } else if cmd.resp_type & MMC_RSP_PRESENT != 0 {
+            unsafe { 
+                *rsp0 = ptr::read_volatile(&self.cmd_rsp);
+                debug_println!("Meson response value: {:#034b} (binary), {:#X} (hex)", *rsp0, *rsp0);
+                debug_println!("Meson received 1 response back!");
+            }
+        }
+    }
+}
+
+impl SdmmcHardware for MesonSdmmcRegisters {
+    fn sdmmc_send_command(&mut self, cmd: &SdmmcCmd, data: Option<&MmcData>) -> Result<(), SdmmcHalError> {
         // It seems that let Some(mmc_data) = data && mmc_data.blocksize != 512
         // is not stable on this nightly 2024.05.01 compiler
         // Set up the data addr
@@ -292,30 +281,7 @@ impl SdioRegisters {
         Ok(())
     }
 
-    fn meson_read_response(&self, cmd: &SdmmcCmd, response: &mut [u32; 4]) {
-        let [rsp0, rsp1, rsp2, rsp3] = response;
-
-        // Assign values by reading the respective registers
-        if cmd.resp_type & MMC_RSP_136 != 0 {
-            unsafe {
-                // Yes, this is in a reverse order as rsp0 and self.cmd_rsp3 is the least significant
-                // Check uboot read response code for more details
-                *rsp0 = ptr::read_volatile(&self.cmd_rsp3);
-                *rsp1 = ptr::read_volatile(&self.cmd_rsp2);
-                *rsp2 = ptr::read_volatile(&self.cmd_rsp1);
-                *rsp3 = ptr::read_volatile(&self.cmd_rsp);
-            }
-            debug_println!("Meson received 4 response back!");
-        } else if cmd.resp_type & MMC_RSP_PRESENT != 0 {
-            unsafe { 
-                *rsp0 = ptr::read_volatile(&self.cmd_rsp);
-                debug_println!("Meson response value: {:#034b} (binary), {:#X} (hex)", *rsp0, *rsp0);
-                debug_println!("Meson received 1 response back!");
-            }
-        }
-    }
-
-    pub fn meson_sdmmc_receive_response(&self, cmd: &SdmmcCmd, response: &mut [u32; 4]) -> Result<(), SdmmcHalError> {
+    fn sdmmc_receive_response(&self, cmd: &SdmmcCmd, response: &mut [u32; 4]) -> Result<(), SdmmcHalError> {
         let status: u32;
         unsafe { status = ptr::read_volatile(&self.status); }
 

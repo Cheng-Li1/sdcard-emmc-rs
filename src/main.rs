@@ -1,12 +1,14 @@
 #![no_std]  // Don't link the standard library
 #![no_main] // Don't use the default entry point
 
-use sdmmc_hal::meson_gx_mmc::SdioRegisters;
+use core::{future::Future, pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
 
-use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError, MMC_RSP_NONE, MMC_RSP_R1, MMC_RSP_R7};
+use sdmmc_hal::meson_gx_mmc::MesonSdmmcRegisters;
+
+use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError, SdmmcProtocol, MMC_RSP_NONE, MMC_RSP_R1, MMC_RSP_R7};
 use sel4_microkit::{debug_print, debug_println, protection_domain, Handler, Infallible};
 
-const SDMMC_BASE_ADDR: *mut SdioRegisters = 0xffe05000 as *mut SdioRegisters;
+const SDMMC_BASE_ADDR: *mut MesonSdmmcRegisters = 0xffe05000 as *mut MesonSdmmcRegisters;
 const DATA_ADDR: *mut u8 = 0x50000000 as *mut u8;
 
 fn print_one_block(ptr: *const u8) {
@@ -23,174 +25,58 @@ fn print_one_block(ptr: *const u8) {
     }
 }
 
+// No-op waker implementations, they do nothing.
+unsafe fn noop(_data: *const ()) {}
+unsafe fn noop_clone(_data: *const ()) -> RawWaker {
+    RawWaker::new(_data, &VTABLE)
+}
+
+// A VTable that points to the no-op functions
+static VTABLE: RawWakerVTable = RawWakerVTable::new(
+    noop_clone,
+    noop,
+    noop,
+    noop,
+);
+
+// Function to create a dummy Waker
+fn create_dummy_waker() -> Waker {
+    let raw_waker = RawWaker::new(core::ptr::null(), &VTABLE);
+    unsafe { Waker::from_raw(raw_waker) }
+}
+
 #[protection_domain]
 fn init() -> HandlerImpl {
     debug_println!("Driver init!");
-    let sdmmc = SdioRegisters::new();
-    let clock_register: u32;
-    let mut point_addr: *const u32;
-    let cfg_register: u32;
-    let mut resp: [u32; 4] = [0; 4];
-
-    // Read request
-    let cmd17 = SdmmcCmd {
-        cmdidx: 17,
-        resp_type: MMC_RSP_R1,
-        // Read start from sector 0
-        cmdarg: 0,
-    };
-
-    let cmd0 = SdmmcCmd {
-        cmdidx: 0,
-        resp_type: MMC_RSP_NONE,
-        cmdarg: 0,
-    };
-
-    let mut cmd8 = SdmmcCmd {
-        cmdidx: 8,
-        resp_type: MMC_RSP_R7,
-        cmdarg: 0x000001AA, // Voltage supply and check pattern
-    };
-
-        let data_addr = DATA_ADDR;
-        let block_data: MmcData = MmcData {
-            blocksize: 512,
-            blockcnt: 1,
-            flags: MmcDataFlag::SdmmcDataRead,
-            addr: 0x50000000,
-        };
-        debug_println!("Print out current data in data_addr: ");
-        print_one_block(DATA_ADDR);
-        debug_println!("Now we try to send a read request");
-        let error: Result<(), SdmmcHalError> = sdmmc.meson_sdmmc_send_cmd(&cmd17, Some(&block_data));
-        if let Err(error_or_not) = error {
-            debug_println!("Send request failed!");
-        }
-        let mut attempts: u64 = 0;
-        loop {
-            attempts += 1;
-            debug_println!("Polling attempt {}", attempts);
-
-            match sdmmc.meson_sdmmc_receive_response(&cmd8, &mut resp) {
-                Ok(_) => {
-                    debug_println!("Response received after {} attempts", attempts);
-                    // Process the CMD8 response
-                    let cmd_response = resp[0];
-                    debug_println!("CMD Response: {:#034b} (binary), {:#X} (hex)", cmd_response, cmd_response);
-
-                    debug_println!("Content in the buffer after read: ");
-
-                    print_one_block(DATA_ADDR);
-
-                    break;
-                },
-                Err(SdmmcHalError::EBUSY) => {
-                    debug_println!("Attempt {}: STATUS_END_OF_CHAIN not set. Card is busy.", attempts);
-                },
-                Err(SdmmcHalError::ETIMEDOUT) => {
-                    debug_println!("Attempt {}: STATUS_RESP_TIMEOUT set.", attempts);
-                },
-                Err(_e) => {
-                    debug_println!("Attempt {}: Received error", attempts);
-                },
-            }
-
-            // Check for overall timeout
-            if attempts > 20 {
-                debug_println!("Polling timed out after {} attempts.", attempts);
-                break;
-            }
-        }
-
-
-
-// Those code are for testing CMD0 and CMD8
-/* 
+    let meson_hal = MesonSdmmcRegisters::new();
+    let mut protocol = SdmmcProtocol::new(meson_hal);
+    let mut future = protocol.read_block(1, 0, 0x50000000);
+    // It is safe for now as our activities are only in this init block so future will not be moved
+    // But this is only for testing
+    let mut pinned_future;
     unsafe {
-        let sdmmc = &mut *SDMMC_BASE_ADDR;
-
-        sdmmc.meson_mmc_config_clock();
-        
-        // Read the value from the clock register
-        clock_register = sdmmc.read_clock(); // Assuming this function returns u32
-        point_addr = &sdmmc.clock as *const _; // Pointer to the clock register
+        pinned_future = Pin::new_unchecked(&mut future);
+    }
     
-        // Print the pointer address
-        debug_println!("Clock register address: {:p}", point_addr);
+    // Create a context with a dummy waker
+    let waker = create_dummy_waker();
+    let mut cx = Context::from_waker(&waker);
 
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-        parse_clock(clock_register);
-
-        cfg_register = sdmmc.read_cfg();
-        point_addr = &sdmmc.cfg as *const _; // Pointer to the clock register
-
-        // Print the pointer address
-        debug_println!("Cfg register address: {:p}", point_addr);
-
-        parse_cfg(cfg_register);
-
-        let _ = sdmmc.meson_sdmmc_send_cmd(&cmd0, None);
-
-        debug_println!("CMD0 sent: GO_IDLE_STATE");
-
-        let _ = sdmmc.meson_sdmmc_send_cmd(&cmd8, None);
-
-        let mut attempts: u64 = 0;
-
-        loop {
-            attempts += 1;
-            debug_println!("Polling attempt {}", attempts);
-
-            match sdmmc.meson_sdmmc_receive_response(&mut cmd8) {
-                Ok(_) => {
-                    debug_println!("Response received after {} attempts", attempts);
-                    // Process the CMD8 response
-                    let cmd8_response = cmd8.response[0];
-                    debug_println!("CMD8 Response: {:#034b} (binary), {:#X} (hex)", cmd8_response, cmd8_response);
-
-                    // Validate the response
-                    if (cmd8_response & 0xFF) != 0xAA {
-                        debug_println!("CMD8 Error Response: {:#034b} (binary), {:#X} (hex)", cmd8_response, cmd8_response);
-                        debug_println!("Invalid CMD8 response check pattern.");
-                    }
-
-                    // Optionally, check voltage acceptance
-                    let voltage_accepted = (cmd8_response >> 8) & 0xF;
-                    if voltage_accepted != 0x1 {
-                        debug_println!("CMD8 Error Response: {:#034b} (binary), {:#X} (hex)", cmd8_response, cmd8_response);
-                        debug_println!("Unsupported voltage range.");
-                    }
-                    break;
-                },
-                Err(SdmmcHalError::EBUSY) => {
-                    debug_println!("Attempt {}: STATUS_END_OF_CHAIN not set. Card is busy.", attempts);
-                },
-                Err(SdmmcHalError::ETIMEDOUT) => {
-                    debug_println!("Attempt {}: STATUS_RESP_TIMEOUT set.", attempts);
-                },
-                Err(_e) => {
-                    debug_println!("Attempt {}: Received error", attempts);
-                },
-            }
-
-            // Check for overall timeout
-            if attempts > 5 {
-                debug_println!("Polling timed out after {} attempts.", attempts);
+    loop {
+        match pinned_future.as_mut().poll(&mut cx) {
+            Poll::Ready(result) => {
+                debug_println!("Future completed with result");
                 break;
+            }
+            Poll::Pending => {
+                debug_println!("Future is not ready, polling again...");
+                // In a real case, you would block or wait here
             }
         }
     }
-*/
+    
+    print_one_block(DATA_ADDR);
+
     HandlerImpl
 }
 

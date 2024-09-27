@@ -88,6 +88,8 @@ pub struct SdmmcProtocol<'a, T: SdmmcHardware> {
     hardware: &'a mut T,
 }
 
+impl<T> Unpin for SdmmcProtocol<'_, T> where T: Unpin + SdmmcHardware {}
+
 impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
     pub fn new(hardware: &'a mut T) -> Self {
         SdmmcProtocol { hardware }
