@@ -1,5 +1,7 @@
 use core::{future::Future, pin::Pin, task::{Context, Poll, Waker}};
 
+use sdmmc_constant::{MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_STOP_TRANSMISSION};
+mod sdmmc_constant;
 pub struct SdmmcCmd {
     pub cmdidx: u32,
     pub resp_type: u32,
@@ -7,10 +9,12 @@ pub struct SdmmcCmd {
 }
 
 pub struct MmcData {
+    // The size of the block(sector size), for sdcard should almost always be 512
     pub blocksize: u32,
-    pub blocks: u32,
+    // Number of blocks to transfer
+    pub blockcnt: u32,
     pub flags: MmcDataFlag,
-    pub addr: u32,
+    pub addr: u64,
 }
 
 pub enum MmcDataFlag {
@@ -26,6 +30,8 @@ pub enum SdmmcHalError {
     ENOTIMPLEMENTED,
     // This error should not be triggered unless there are bugs in program
     EUNDEFINED,
+    // The block transfer succeed, but fail to stop the read/write process
+    ESTOPCMD,
 }
 
 // Define the MMC response flags
@@ -87,12 +93,65 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         SdmmcProtocol { hardware }
     }
 
-    pub fn read_block(&self, blocknum: u32, start_idx: u64) {
+    pub async fn read_block(&mut self, blockcnt: u32, start_idx: u64, destination: u64) -> Result<(), SdmmcHalError> {
+        let hardware: &mut T = self.hardware;
+        let mut cmd: SdmmcCmd;
+        let mut res: Result<(), SdmmcHalError>;
+        // TODO: Figure out a better way to support cards with 4 KB sector size
+        let data: MmcData = MmcData {
+            blocksize: 512,
+            blockcnt,
+            flags: MmcDataFlag::SdmmcDataRead,
+            addr: destination,
+        };
+        let mut resp: [u32; 4] = [0; 4];
+        // TODO: Add more validation check in the future
+        // Like sdmmc card usually cannot transfer arbitrary number of blocks at once
 
-    }
-
-    async fn send_cmd_and_get_response(cmd: &SdmmcCmd, data: Option<&MmcData>) -> Result<(), SdmmcHalError> {
-        Ok(())
+        // The cmd arg for read operation is different between some card variation as showed by uboot code below
+        /*
+            if (mmc->high_capacity)
+                cmd.cmdarg = start;
+            else
+                cmd.cmdarg = start * mmc->read_bl_len;
+        */
+        // For now we default to assume the card is high_capacity
+        // TODO: Fix it when we properly implement card boot up
+        let cmd_arg: u64 = start_idx;
+        if blockcnt == 1 {
+            cmd = SdmmcCmd {
+                cmdidx: MMC_CMD_READ_SINGLE_BLOCK,
+                resp_type: MMC_RSP_R1,
+                cmdarg: cmd_arg as u32,
+            };
+            let future = SdmmcCmdFuture::new(hardware, &cmd, Some(&data), &mut resp);
+            res = future.await;
+            return res;
+        }
+        else {
+            cmd = SdmmcCmd {
+                cmdidx: MMC_CMD_READ_MULTIPLE_BLOCK,
+                resp_type: MMC_RSP_R1,
+                cmdarg: cmd_arg as u32,
+            };
+            let future = SdmmcCmdFuture::new(hardware, &cmd, Some(&data), &mut resp);
+            res = future.await;
+            if let Ok(()) = res {
+                // Uboot code for determine response type in this case
+                // cmd.resp_type = (IS_SD(mmc) || write) ? MMC_RSP_R1b : MMC_RSP_R1;
+                // TODO: Add mmc checks here
+                cmd = SdmmcCmd {
+                    cmdidx: MMC_CMD_STOP_TRANSMISSION,
+                    resp_type: MMC_RSP_R1B,
+                    cmdarg: 0,
+                };
+                let future = SdmmcCmdFuture::new(hardware, &cmd, None, &mut resp);
+                res = future.await;
+                return res.map_err(|_| SdmmcHalError::ESTOPCMD);
+            } else {
+                return res;
+            }
+        }
     }
 }
 
@@ -123,7 +182,7 @@ impl<'a, 'b, 'c> SdmmcCmdFuture<'a, 'b, 'c> {
         cmd: &'b SdmmcCmd,
         data: Option<&'b MmcData>,
         response: &'c mut [u32; 4]) -> SdmmcCmdFuture<'a, 'b, 'c> {
-        SdmmcCmdFuture{
+        SdmmcCmdFuture {
             hardware,
             cmd,
             data,
@@ -134,7 +193,6 @@ impl<'a, 'b, 'c> SdmmcCmdFuture<'a, 'b, 'c> {
     }
 }
 
-
 /// SdmmcCmdFuture serves as the basic building block for async fn above
 /// In the context of Sdmmc device, since the requests are executed linearly under the hood
 /// We actually do not need an executor to execute the request
@@ -144,7 +202,7 @@ impl<'a, 'b, 'c> SdmmcCmdFuture<'a, 'b, 'c> {
 impl<'a, 'b, 'c> Future for SdmmcCmdFuture<'a, 'b, 'c> {
     type Output = Result<(), SdmmcHalError>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // As I have said above, this waker is not being used so it do not need to be shared data
         // But store the waker provided anyway
         self.waker = Some(cx.waker().clone());

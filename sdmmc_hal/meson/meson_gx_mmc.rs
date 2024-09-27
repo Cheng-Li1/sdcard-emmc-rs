@@ -252,7 +252,7 @@ impl SdioRegisters {
                 meson_mmc_cmd |= CMD_CFG_DATA_WR;
             }
             
-            meson_mmc_cmd |= CMD_CFG_DATA_IO | CMD_CFG_BLOCK_MODE | data.blocks;
+            meson_mmc_cmd |= CMD_CFG_DATA_IO | CMD_CFG_BLOCK_MODE | data.blockcnt;
         }
 
         meson_mmc_cmd |= CMD_CFG_TIMEOUT_4S | CMD_CFG_OWNER | CMD_CFG_END_OF_CHAIN;
@@ -266,11 +266,12 @@ impl SdioRegisters {
         // Set up the data addr
         let mut data_addr: u32 = 0u32;
         if let Some(mmc_data) = data {
-            if mmc_data.blocksize != 512 {
+            // TODO: Check what if the addr is u32::MAX, will the sdcard still working?
+            if mmc_data.blocksize != 512 || mmc_data.addr > (u32::MAX as u64) {
                 return Err(SdmmcHalError::EINVAL);
             }
             // Depend on the flag and hardware, the cache should be flushed accordingly
-            data_addr = mmc_data.addr;
+            data_addr = mmc_data.addr as u32;
         }
 
         // Stop data transfer

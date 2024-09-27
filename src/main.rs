@@ -55,7 +55,7 @@ fn init() -> HandlerImpl {
         let data_addr = DATA_ADDR;
         let block_data: MmcData = MmcData {
             blocksize: 512,
-            blocks: 1,
+            blockcnt: 1,
             flags: MmcDataFlag::SdmmcDataRead,
             addr: 0x50000000,
         };
