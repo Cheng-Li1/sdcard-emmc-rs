@@ -53,7 +53,8 @@ pub const MMC_RSP_R6: u32 = MMC_RSP_PRESENT | MMC_RSP_CRC | MMC_RSP_OPCODE;
 pub const MMC_RSP_R7: u32 = MMC_RSP_PRESENT | MMC_RSP_CRC | MMC_RSP_OPCODE;
 
 
-// Program async Rust can be very dangerous if you do not know what is happening understand the hood
+/// Program async Rust can be very dangerous if you do not know what is happening understand the hood
+/// Power up and power off cannot be properly implemented if I do not have access to control gpio/ regulator and timer
 pub trait SdmmcHardware {
     fn sdmmc_power_up(&mut self) -> Result<(), SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
@@ -84,8 +85,9 @@ pub trait SdmmcHardware {
     }
 }
 
+/// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
 pub struct SdmmcProtocol<'a, T: SdmmcHardware> {
-    hardware: &'a mut T,
+    pub hardware: &'a mut T,
 }
 
 impl<T> Unpin for SdmmcProtocol<'_, T> where T: Unpin + SdmmcHardware {}
@@ -119,6 +121,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         */
         // For now we default to assume the card is high_capacity
         // TODO: Fix it when we properly implement card boot up
+        // TODO: If we boot the card by ourself or reset the card, remember to 
         let cmd_arg: u64 = start_idx;
         if blockcnt == 1 {
             cmd = SdmmcCmd {
@@ -207,6 +210,8 @@ impl<'a, 'b, 'c> Future for SdmmcCmdFuture<'a, 'b, 'c> {
      fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // As I have said above, this waker is not being used so it do not need to be shared data
         // But store the waker provided anyway
+        // Beware you need to update waker every polling, for more details about why
+        // read Asynchronous Programming in Rust
         self.waker = Some(cx.waker().clone());
 
         match self.state {

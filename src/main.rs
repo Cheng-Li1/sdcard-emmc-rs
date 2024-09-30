@@ -1,15 +1,23 @@
 #![no_std]  // Don't link the standard library
 #![no_main] // Don't use the default entry point
 
-use core::{future::Future, pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+extern crate alloc;
 
+use core::{future::{self, Future}, pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+
+use alloc::boxed::Box;
 use sdmmc_hal::meson_gx_mmc::MesonSdmmcRegisters;
 
 use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError, SdmmcProtocol, MMC_RSP_NONE, MMC_RSP_R1, MMC_RSP_R7};
-use sel4_microkit::{debug_print, debug_println, protection_domain, Handler, Infallible};
+use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
 const SDMMC_BASE_ADDR: *mut MesonSdmmcRegisters = 0xffe05000 as *mut MesonSdmmcRegisters;
 const DATA_ADDR: *mut u8 = 0x50000000 as *mut u8;
+
+const BLK_VIRTUALIZER: sel4_microkit::Channel = sel4_microkit::Channel::new(0);
+
+static meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
+static SDMMC: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(meson_hal);
 
 fn print_one_block(ptr: *const u8) {
     unsafe {
@@ -45,45 +53,60 @@ fn create_dummy_waker() -> Waker {
     unsafe { Waker::from_raw(raw_waker) }
 }
 
-#[protection_domain]
-fn init() -> HandlerImpl {
+#[protection_domain(heap_size = 0x10000)]
+fn init() -> HandlerImpl<'static> {
     debug_println!("Driver init!");
-    let meson_hal = MesonSdmmcRegisters::new();
-    let mut protocol = SdmmcProtocol::new(meson_hal);
-    let mut future = protocol.read_block(1, 0, 0x50000000);
-    // It is safe for now as our activities are only in this init block so future will not be moved
-    // But this is only for testing
-    let mut pinned_future;
-    unsafe {
-        pinned_future = Pin::new_unchecked(&mut future);
+    let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
+    let protocol: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(meson_hal);
+    HandlerImpl { 
+        future: None,
+        sdmmc: protocol,
     }
-    
-    // Create a context with a dummy waker
-    let waker = create_dummy_waker();
-    let mut cx = Context::from_waker(&waker);
-
-    loop {
-        match pinned_future.as_mut().poll(&mut cx) {
-            Poll::Ready(result) => {
-                debug_println!("Future completed with result");
-                break;
-            }
-            Poll::Pending => {
-                debug_println!("Future is not ready, polling again...");
-                // In a real case, you would block or wait here
-            }
-        }
-    }
-    
-    print_one_block(DATA_ADDR);
-
-    HandlerImpl
 }
 
-struct HandlerImpl;
+struct HandlerImpl<'a> {
+    future: Option<Pin<Box<dyn Future<Output = Result<(), SdmmcHalError>> + 'a>>>,
+    sdmmc: SdmmcProtocol<'a, MesonSdmmcRegisters>,
+}
 
-impl Handler for HandlerImpl {
+impl<'a> Handler for HandlerImpl<'a> {
     type Error = Infallible;
+
+    fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {
+        match channel {
+            BLK_VIRTUALIZER => {
+                // Assume we magically get the value from sddf
+                let sdmmc = &mut self.sdmmc;
+                if let None = self.future {
+                    self.future = Some(Box::pin(sdmmc.read_block(1, 0, 0x50000000)));
+                    // Create a context with a dummy waker
+                    let waker = create_dummy_waker();
+                    let mut cx = Context::from_waker(&waker);
+                    if let Some(future) = &mut self.future {
+                        loop {
+                            match future.as_mut().poll(&mut cx) {
+                                Poll::Ready(result) => {
+                                    debug_println!("Future completed with result");
+                                    self.future = None; // Reset the future once done
+                                    break;
+                                }
+                                Poll::Pending => {
+                                    debug_println!("Future is not ready, polling again...");
+                                }
+                            }
+                        }
+                    }
+                }
+                else {
+                    debug_println!("SDMMC_DRIVER: Undefined states! Check your code for bugs!");
+                }
+            }
+            _ => {
+                debug_println!("SDMMC_DRIVER: MESSAGE FROM UNKNOWN CHANNEL: {}", channel.index());
+            }
+        }
+        Ok(())
+    }
 }
 
 fn parse_cfg(cfg_register: u32) {
@@ -212,3 +235,38 @@ fn parse_clock(clock_register: u32) {
         let cfg_div = clock_register & 0x3F; // 6-bit field
         debug_println!("Cfg_div (bits 5:0): {}", cfg_div);
 }
+
+/*
+Great! Now I have another question, my sdmmc driver is almost working but there is one thing that I must do since the rest of the system are in C, assuming there is a structure somehow in the memory and it is the driver's responsibility to populate that structure. What is more, to cooperate with the rest of the system, I need to FFI to some functions. What should I do?
+Structure to populate:
+/* Size of a single block to be transferred */
+#define BLK_TRANSFER_SIZE 4096
+/* Device serial number max string length */
+#define BLK_MAX_SERIAL_NUMBER 63
+
+typedef struct blk_storage_info {
+    char serial_number[BLK_MAX_SERIAL_NUMBER + 1];
+    /* device does not accept write requests */
+    bool read_only;
+    /* whether this configuration is populated yet */
+    bool ready;
+    /* size of a sector, in bytes */
+    uint16_t sector_size;
+    /* optimal block size, specified in BLK_TRANSFER_SIZE sized units */
+    uint16_t block_size;
+    uint16_t queue_depth;
+    /* geometry to guide FS layout */
+    uint16_t cylinders, heads, blocks;
+    /* total capacity of the device, specified in BLK_TRANSFER_SIZE sized units. */
+    uint64_t capacity;
+} blk_storage_info_t;
+
+Functions to FFI to:
+static inline void blk_queue_init(blk_queue_handle_t *h,
+                                  blk_req_queue_t *request,
+                                  blk_resp_queue_t *response,
+                                  uint32_t capacity);
+static inline int blk_queue_length_req(blk_queue_handle_t *h);
+static inline int blk_queue_length_resp(blk_queue_handle_t *h);
+ 
+*/
