@@ -3,21 +3,18 @@
 
 extern crate alloc;
 
-use core::{future::{self, Future}, pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+use core::{cell::RefCell, future::{self, Future}, pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, rc::Rc};
 use sdmmc_hal::meson_gx_mmc::MesonSdmmcRegisters;
 
-use sdmmc_protocol::sdmmc::{MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError, SdmmcProtocol, MMC_RSP_NONE, MMC_RSP_R1, MMC_RSP_R7};
+use sdmmc_protocol::sdmmc::{SdmmcHalError, SdmmcProtocol};
 use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
 const SDMMC_BASE_ADDR: *mut MesonSdmmcRegisters = 0xffe05000 as *mut MesonSdmmcRegisters;
 const DATA_ADDR: *mut u8 = 0x50000000 as *mut u8;
 
 const BLK_VIRTUALIZER: sel4_microkit::Channel = sel4_microkit::Channel::new(0);
-
-static meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
-static SDMMC: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(meson_hal);
 
 fn print_one_block(ptr: *const u8) {
     unsafe {
@@ -58,25 +55,27 @@ fn init() -> HandlerImpl<'static> {
     debug_println!("Driver init!");
     let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
     let protocol: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(meson_hal);
-    HandlerImpl { 
+    HandlerImpl {
         future: None,
-        sdmmc: protocol,
+        sdmmc: Rc::new(protocol),
     }
 }
 
 struct HandlerImpl<'a> {
     future: Option<Pin<Box<dyn Future<Output = Result<(), SdmmcHalError>> + 'a>>>,
-    sdmmc: SdmmcProtocol<'a, MesonSdmmcRegisters>,
+    sdmmc: Rc<SdmmcProtocol<'a, MesonSdmmcRegisters>>,
 }
 
 impl<'a> Handler for HandlerImpl<'a> {
     type Error = Infallible;
 
+    /// In Rust, it is actually very hard to manage long live future object that must be created
+    /// by borrowing 
     fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {
         match channel {
             BLK_VIRTUALIZER => {
                 // Assume we magically get the value from sddf
-                let sdmmc = &mut self.sdmmc;
+                let sdmmc = self.sdmmc.clone();
                 if let None = self.future {
                     self.future = Some(Box::pin(sdmmc.read_block(1, 0, 0x50000000)));
                     // Create a context with a dummy waker
