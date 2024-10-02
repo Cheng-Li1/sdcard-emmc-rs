@@ -97,8 +97,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         SdmmcProtocol { hardware }
     }
 
-    pub async fn read_block(&mut self, blockcnt: u32, start_idx: u64, destination: u64) -> Result<(), SdmmcHalError> {
-        let hardware: &mut T = self.hardware;
+    pub async fn read_block(self, blockcnt: u32, start_idx: u64, destination: u64) -> (Result<(), SdmmcHalError>, Option<SdmmcProtocol<'a, T>>) {
         let mut cmd: SdmmcCmd;
         let mut res: Result<(), SdmmcHalError>;
         // TODO: Figure out a better way to support cards with 4 KB sector size
@@ -121,7 +120,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         */
         // For now we default to assume the card is high_capacity
         // TODO: Fix it when we properly implement card boot up
-        // TODO: If we boot the card by ourself or reset the card, remember to 
+        // TODO: If we boot the card by ourself or reset the card, remember to send block len cmd
         let cmd_arg: u64 = start_idx;
         if blockcnt == 1 {
             cmd = SdmmcCmd {
@@ -129,9 +128,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                 resp_type: MMC_RSP_R1,
                 cmdarg: cmd_arg as u32,
             };
-            let future = SdmmcCmdFuture::new(hardware, &cmd, Some(&data), &mut resp);
+            let future = SdmmcCmdFuture::new(self.hardware, &cmd, Some(&data), &mut resp);
             res = future.await;
-            return res;
+            return (res, Some(self));
         }
         else {
             cmd = SdmmcCmd {
@@ -139,7 +138,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                 resp_type: MMC_RSP_R1,
                 cmdarg: cmd_arg as u32,
             };
-            let future = SdmmcCmdFuture::new(hardware, &cmd, Some(&data), &mut resp);
+            let future = SdmmcCmdFuture::new(self.hardware, &cmd, Some(&data), &mut resp);
             res = future.await;
             if let Ok(()) = res {
                 // Uboot code for determine response type in this case
@@ -150,11 +149,11 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                     resp_type: MMC_RSP_R1B,
                     cmdarg: 0,
                 };
-                let future = SdmmcCmdFuture::new(hardware, &cmd, None, &mut resp);
+                let future = SdmmcCmdFuture::new(self.hardware, &cmd, None, &mut resp);
                 res = future.await;
-                return res.map_err(|_| SdmmcHalError::ESTOPCMD);
+                return (res.map_err(|_| SdmmcHalError::ESTOPCMD), Some(self));
             } else {
-                return res;
+                return (res, Some(self));
             }
         }
     }

@@ -3,12 +3,15 @@
 
 extern crate alloc;
 
-use core::{cell::RefCell, future::{self, Future}, pin::Pin, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+mod sddf_blk;
 
-use alloc::{boxed::Box, rc::Rc};
+use core::{future::{self, Future}, pin::{self, Pin}, task::{Context, Poll, RawWaker, RawWakerVTable, Waker}};
+
+use alloc::boxed::Box;
+use sddf_blk::{blk_dequeue_req_helper, blk_queue_empty_req_helper, blk_queue_full_resp_helper, blk_queue_init_helper, BlkOp};
 use sdmmc_hal::meson_gx_mmc::MesonSdmmcRegisters;
 
-use sdmmc_protocol::sdmmc::{SdmmcHalError, SdmmcProtocol};
+use sdmmc_protocol::sdmmc::{self, SdmmcHalError, SdmmcHardware, SdmmcProtocol};
 use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
 const SDMMC_BASE_ADDR: *mut MesonSdmmcRegisters = 0xffe05000 as *mut MesonSdmmcRegisters;
@@ -51,22 +54,25 @@ fn create_dummy_waker() -> Waker {
 }
 
 #[protection_domain(heap_size = 0x10000)]
-fn init() -> HandlerImpl<'static> {
+fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     debug_println!("Driver init!");
+    unsafe {
+        blk_queue_init_helper();
+    }
     let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
     let protocol: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(meson_hal);
     HandlerImpl {
         future: None,
-        sdmmc: Rc::new(protocol),
+        sdmmc: Some(protocol),
     }
 }
 
-struct HandlerImpl<'a> {
-    future: Option<Pin<Box<dyn Future<Output = Result<(), SdmmcHalError>> + 'a>>>,
-    sdmmc: Rc<SdmmcProtocol<'a, MesonSdmmcRegisters>>,
+struct HandlerImpl<'a, T: SdmmcHardware> {
+    future: Option<Pin<Box<dyn Future<Output = (Result<(), SdmmcHalError>, Option<SdmmcProtocol<'a, T>>)> + 'a>>>,
+    sdmmc: Option<SdmmcProtocol<'a, T>>,
 }
 
-impl<'a> Handler for HandlerImpl<'a> {
+impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
     type Error = Infallible;
 
     /// In Rust, it is actually very hard to manage long live future object that must be created
@@ -74,30 +80,64 @@ impl<'a> Handler for HandlerImpl<'a> {
     fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {
         match channel {
             BLK_VIRTUALIZER => {
+                unsafe {
+                    // If request queue is empty or resp queue is full, do not dequeue request
+                    if blk_queue_empty_req_helper() > 0 || blk_queue_full_resp_helper() > 0 {
+                        return Ok(())
+                    }
+                }
                 // Assume we magically get the value from sddf
-                let sdmmc = self.sdmmc.clone();
-                if let None = self.future {
-                    self.future = Some(Box::pin(sdmmc.read_block(1, 0, 0x50000000)));
-                    // Create a context with a dummy waker
-                    let waker = create_dummy_waker();
-                    let mut cx = Context::from_waker(&waker);
-                    if let Some(future) = &mut self.future {
-                        loop {
-                            match future.as_mut().poll(&mut cx) {
-                                Poll::Ready(result) => {
-                                    debug_println!("Future completed with result");
-                                    self.future = None; // Reset the future once done
-                                    break;
+                let mut request_code: BlkOp = BlkOp::BlkReqRead;
+                let mut io_or_offset: u64 = 0;
+                let mut block_number: u32 = 0;
+                let mut count: u16 = 0;
+                let mut id: u32 = 0;
+                unsafe {
+                    blk_dequeue_req_helper(
+                        &mut request_code as *mut BlkOp,
+                        &mut io_or_offset as *mut u64,
+                        &mut block_number as *mut u32,
+                        &mut count as *mut u16,
+                        &mut id as *mut u32,
+                    );
+                }
+
+                match request_code {
+                    BlkOp::BlkReqRead => {
+                        match &mut self.future {
+                            Some(future) => {
+                                let waker = create_dummy_waker();
+                                let mut cx = Context::from_waker(&waker);
+                                // TODO: I can get rid of this loop once I configure out how to enable interrupt from Linux kernel driver
+                                loop {
+                                    match future.as_mut().poll(&mut cx) {
+                                        Poll::Ready((result, sdmmc)) => {
+                                            debug_println!("SDMMC_DRIVER: Future completed with result");
+                                            self.future = None; // Reset the future once done
+                                            self.sdmmc = sdmmc;
+                                            break;
+                                        }
+                                        Poll::Pending => {
+                                            debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
+                                        }
+                                    }
                                 }
-                                Poll::Pending => {
-                                    debug_println!("Future is not ready, polling again...");
+                                // Send the result back to sddf_blk here
+        
+                            }
+                            None => {
+                                if let Some(sdmmc) = self.sdmmc.take() {
+                                    self.future = Some(Box::pin(sdmmc.read_block(1, 0, 0x50000000)));
+                                }
+                                else {
+                                    panic!("SDMMC_DRIVER: No sdmmc when future is not available which is an undefined state")
                                 }
                             }
                         }
                     }
-                }
-                else {
-                    debug_println!("SDMMC_DRIVER: Undefined states! Check your code for bugs!");
+                    BlkOp::BlkReqWrite => return Ok(()),
+                    BlkOp::BlkReqFlush => return Ok(()),
+                    BlkOp::BlkReqBarrier => return Ok(()),
                 }
             }
             _ => {
