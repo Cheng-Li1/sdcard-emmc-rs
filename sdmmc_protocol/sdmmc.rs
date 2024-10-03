@@ -1,6 +1,6 @@
 use core::{future::Future, pin::Pin, task::{Context, Poll, Waker}};
 
-use sdmmc_constant::{MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_STOP_TRANSMISSION};
+use sdmmc_constant::{MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK};
 mod sdmmc_constant;
 pub struct SdmmcCmd {
     pub cmdidx: u32,
@@ -100,7 +100,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
     pub async fn read_block(self, blockcnt: u32, start_idx: u64, destination: u64) -> (Result<(), SdmmcHalError>, Option<SdmmcProtocol<'a, T>>) {
         let mut cmd: SdmmcCmd;
         let mut res: Result<(), SdmmcHalError>;
-        // TODO: Figure out a better way to support cards with 4 KB sector size
+        // TODO: Figure out a way to support cards with 4 KB sector size
         let data: MmcData = MmcData {
             blocksize: 512,
             blockcnt,
@@ -135,6 +135,59 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         else {
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_READ_MULTIPLE_BLOCK,
+                resp_type: MMC_RSP_R1,
+                cmdarg: cmd_arg as u32,
+            };
+            let future = SdmmcCmdFuture::new(self.hardware, &cmd, Some(&data), &mut resp);
+            res = future.await;
+            if let Ok(()) = res {
+                // Uboot code for determine response type in this case
+                // cmd.resp_type = (IS_SD(mmc) || write) ? MMC_RSP_R1b : MMC_RSP_R1;
+                // TODO: Add mmc checks here
+                cmd = SdmmcCmd {
+                    cmdidx: MMC_CMD_STOP_TRANSMISSION,
+                    resp_type: MMC_RSP_R1B,
+                    cmdarg: 0,
+                };
+                let future = SdmmcCmdFuture::new(self.hardware, &cmd, None, &mut resp);
+                res = future.await;
+                return (res.map_err(|_| SdmmcHalError::ESTOPCMD), Some(self));
+            } else {
+                return (res, Some(self));
+            }
+        }
+    }
+
+    // Almost the same with read_block aside from the cmd being sent is a bit different
+    // For any future code add to read_block/write_block, remember to change both
+    // Should read_block/write_block be the same function?
+    pub async fn write_block(self, blockcnt: u32, start_idx: u64, source: u64) -> (Result<(), SdmmcHalError>, Option<SdmmcProtocol<'a, T>>) {
+        let mut cmd: SdmmcCmd;
+        let mut res: Result<(), SdmmcHalError>;
+        // TODO: Figure out a way to support cards with 4 KB sector size
+        let data: MmcData = MmcData {
+            blocksize: 512,
+            blockcnt,
+            flags: MmcDataFlag::SdmmcDataWrite,
+            addr: source,
+        };
+        let mut resp: [u32; 4] = [0; 4];
+        // TODO: Add more validation check in the future
+
+        let cmd_arg: u64 = start_idx;
+        if blockcnt == 1 {
+            cmd = SdmmcCmd {
+                cmdidx: MMC_CMD_WRITE_SINGLE_BLOCK,
+                resp_type: MMC_RSP_R1,
+                cmdarg: cmd_arg as u32,
+            };
+            let future = SdmmcCmdFuture::new(self.hardware, &cmd, Some(&data), &mut resp);
+            res = future.await;
+            return (res, Some(self));
+        }
+        else {
+            cmd = SdmmcCmd {
+                cmdidx: MMC_CMD_WRITE_MULTIPLE_BLOCK,
                 resp_type: MMC_RSP_R1,
                 cmdarg: cmd_arg as u32,
             };
