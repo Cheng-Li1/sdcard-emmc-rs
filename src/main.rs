@@ -128,7 +128,11 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                                 panic!("SDMMC_DRIVER: The sdmmc should be here and the future should be empty!!!")
                             }
                         },
-                        _ => ()
+                        _ => {
+                            unsafe {
+                                blk_enqueue_resp_helper(BlkStatus::BlkRespOk, 0, id);
+                            }
+                        }
                     }
                     // Notify the virtualizer when there are results available
                     // TODO: Add retry if the sdcard return an error
