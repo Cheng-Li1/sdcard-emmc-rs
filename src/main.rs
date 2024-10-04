@@ -16,6 +16,12 @@ use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Hand
 
 const BLK_VIRTUALIZER: sel4_microkit::Channel = sel4_microkit::Channel::new(0);
 
+const SDCARD_SECTOR_SIZE: u32 = 512;
+const SDDF_TRANSFER_SIZE: u32 = 4096;
+const SDDF_TO_REAL_SECTOR: u32 = SDDF_TRANSFER_SIZE/SDCARD_SECTOR_SIZE;
+
+const RETRY_CHANCE: u32 = 5;
+
 fn print_one_block(ptr: *const u8) {
     unsafe {
         // Iterate over the 512 bytes and print each one in hexadecimal format
@@ -52,12 +58,19 @@ fn create_dummy_waker() -> Waker {
 
 #[protection_domain(heap_size = 0x10000)]
 fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
-    debug_println!("Driver init!");
+    // debug_println!("Driver init!");
     unsafe {
         blk_queue_init_helper();
     }
     let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
     let protocol: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(meson_hal);
+
+    // Code block to test read ability
+    /* 
+    {   
+        let future = Box::pin(protocol.read_block(count as u32, block_number as u64, io_or_offset));
+    }
+    */
     HandlerImpl {
         future: None,
         sdmmc: Some(protocol),
@@ -77,6 +90,7 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
     fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {
         match channel {
             BLK_VIRTUALIZER => {
+                // This while loop is to dequeue every command 
                 while unsafe { blk_queue_empty_req_helper() == 0 && blk_queue_full_resp_helper() == 0 } {
                     // Assume we magically get the value from sddf
                     let mut request_code: BlkOp = BlkOp::BlkReqRead;
@@ -97,8 +111,8 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                     // Since the real block size is 512 byte and sddf_block_transfer size is 4KB
                     // multiply 8 here
                     // But I do not like this design as why block driver need to know the real transfer size???
-                    block_number = block_number * 8;
-                    count = count * 8;
+                    block_number = block_number * SDDF_TO_REAL_SECTOR;
+                    count = count * SDDF_TO_REAL_SECTOR as u16;
 
                     // Print the retrieved values
                     /*
@@ -107,64 +121,93 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                     debug_println!("count: {}", count);                  // Simple u16
                     debug_println!("id: {}", id);                        // Simple u32
                     */
-                    match request_code {
-                        BlkOp::BlkReqRead => {
-                            // If the future is some, block itself
-                            // Since we polling on 
-                            // This match in the loop might seems to be ineffient here as the correct way is create future first and polling on that
-                            // future. But as the driver would soon change into poll on interrupt instead of polling until finish, so just leave it for now
-                            if let Some(sdmmc) = self.sdmmc.take() {
-                                self.future = Some(Box::pin(sdmmc.read_block(count as u32, block_number as u64, io_or_offset)));
+                    let mut retry: u32 = RETRY_CHANCE;
+                    let mut success_count: u64 = 0;
+                    let resp_status: BlkStatus;
+                    loop {
+                        // This value should 
+                        let count_to_do: u32;
+                        
+                        match request_code {
+                            BlkOp::BlkReqRead => {
+                                // If the future is some, block itself
+                                // Since we polling on 
+                                // This match in the loop might seems to be ineffient here as the correct way is create future first and polling on that
+                                // future. But as the driver would soon change into poll on interrupt instead of polling until finish, so just leave it for now
+
+                                // TODO: The MAX_BLOCK_PER_TRANSFER is got by hackily get the defines in hardware layer which is wrong, check that to get properly from protocol layer
+                                count_to_do = core::cmp::min(count as u32, sdmmc_hal::meson_gx_mmc::MAX_BLOCK_PER_TRANSFER);
+                                if let Some(sdmmc) = self.sdmmc.take() {
+                                    self.future = Some(Box::pin(sdmmc.read_block(count_to_do as u32, block_number as u64 + success_count, io_or_offset + success_count * SDCARD_SECTOR_SIZE as u64)));
+                                }
+                                else {
+                                    panic!("SDMMC_DRIVER: The sdmmc should be here and the future should be empty!!!")
+                                }
                             }
-                            else {
-                                panic!("SDMMC_DRIVER: The sdmmc should be here and the future should be empty!!!")
+                            BlkOp::BlkReqWrite => {
+                                count_to_do = core::cmp::min(count as u32, sdmmc_hal::meson_gx_mmc::MAX_BLOCK_PER_TRANSFER);
+                                if let Some(sdmmc) = self.sdmmc.take() {
+                                    self.future = Some(Box::pin(sdmmc.write_block(count_to_do as u32, block_number as u64 + success_count, io_or_offset + success_count * SDCARD_SECTOR_SIZE as u64)));
+                                }
+                                else {
+                                    panic!("SDMMC_DRIVER: The sdmmc should be here and the future should be empty!!!")
+                                }
                             }
-                        }
-                        BlkOp::BlkReqWrite => {
-                            if let Some(sdmmc) = self.sdmmc.take() {
-                                self.future = Some(Box::pin(sdmmc.write_block(count as u32, block_number as u64, io_or_offset)));
-                            }
-                            else {
-                                panic!("SDMMC_DRIVER: The sdmmc should be here and the future should be empty!!!")
-                            }
-                        },
-                        _ => {
-                            unsafe {
-                                blk_enqueue_resp_helper(BlkStatus::BlkRespOk, 0, id);
-                            }
-                        }
-                    }
-                    // Notify the virtualizer when there are results available
-                    // TODO: Add retry if the sdcard return an error
-                    if let Some(future) = &mut self.future {
-                        let waker = create_dummy_waker();
-                        let mut cx = Context::from_waker(&waker);
-                        // TODO: I can get rid of this loop once I configure out how to enable interrupt from Linux kernel driver
-                        loop {
-                            match future.as_mut().poll(&mut cx) {
-                                Poll::Ready((result, sdmmc)) => {
-                                    debug_println!("SDMMC_DRIVER: Future completed with result");
-                                    self.future = None; // Reset the future once done
-                                    self.sdmmc = sdmmc;
-                                    if result.is_err() {
-                                        unsafe {
-                                            blk_enqueue_resp_helper(BlkStatus::BlkRespSeekError, 0, id);
-                                        }
-                                    }
-                                    else {
-                                        unsafe {
-                                            blk_enqueue_resp_helper(BlkStatus::BlkRespOk, count as u32, id);
-                                        }
-                                    }
+                            _ => {
+                                // For other request, enqueue response and exit loop
+                                unsafe {
+                                    resp_status = BlkStatus::BlkRespOk;
+                                    blk_enqueue_resp_helper(BlkStatus::BlkRespOk, 0, id);
                                     break;
                                 }
-                                Poll::Pending => {
-                                    debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
+                            }
+                        }
+                        // Notify the virtualizer when there are results available
+                        // TODO: Add retry if the sdcard return an error
+                        if let Some(future) = &mut self.future {
+                            let waker = create_dummy_waker();
+                            let mut cx = Context::from_waker(&waker);
+                            // TODO: I can get rid of this loop once I configure out how to enable interrupt from Linux kernel driver
+                            loop {
+                                match future.as_mut().poll(&mut cx) {
+                                    Poll::Ready((result, sdmmc)) => {
+                                        // debug_println!("SDMMC_DRIVER: Future completed with result");
+                                        self.future = None; // Reset the future once done
+                                        self.sdmmc = sdmmc;
+                                        if result.is_err() {
+                                            debug_println!("SDMMC_DRIVER: DISK ERROR ENCOUNTERED, possiblely retry!");
+                                            retry -= 1;
+                                        }
+                                        else {
+                                            // Reset retry chance here
+                                            retry = RETRY_CHANCE;
+                                            
+                                            success_count += count_to_do as u64;
+                                            count -= count_to_do as u16;
+                                        }
+                                        break;
+                                    }
+                                    Poll::Pending => {
+                                        // debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
+                                    }
                                 }
                             }
                         }
+                        // Exit when all block transferred or used all retry chances
+                        if count == 0 {
+                            resp_status = BlkStatus::BlkRespOk;
+                            break;
+                        }
+                        if retry == 0 {
+                            resp_status = BlkStatus::BlkRespSeekError;
+                            break;
+                        }
                     }
-                    debug_println!("SDMMC_DRIVER: Notify BLK_VIRTUALIZER");
+                    // Enqueue resp
+                    unsafe {
+                        blk_enqueue_resp_helper(resp_status, success_count as u32, id);
+                    }
+                    // debug_println!("SDMMC_DRIVER: Notify BLK_VIRTUALIZER");
                     BLK_VIRTUALIZER.notify();
                 }
             }

@@ -61,6 +61,12 @@ const STATUS_END_OF_CHAIN: u32 = 1 << 13;      // BIT(13)
 const CFG_BL_LEN_MASK: u32 = 0xF << 4; // Bits 4-7
 const CFG_BL_LEN_SHIFT: u32 = 4;
 
+const MESON_SDCARD_SECTOR_SIZE: u32 = 512;
+
+pub const MAX_BLOCK_PER_TRANSFER:u32 = 0xFF;
+
+const WRITE_ADDR_UPPER: u32 = 0xFFFE0000;
+
 // const VALID_DMA_ADDR_LOWER: u32 = 0x2000000;
 // const VALID_DMA_ADDR_UPPER: u32 = 0x10000000;
 // const VALID_DMA_ADDR_MASK: u32 = 0x80000003;
@@ -237,12 +243,12 @@ impl MesonSdmmcRegisters {
                 *rsp2 = ptr::read_volatile(&self.cmd_rsp1);
                 *rsp3 = ptr::read_volatile(&self.cmd_rsp);
             }
-            debug_println!("Meson received 4 response back!");
+            // debug_println!("Meson received 4 response back!");
         } else if cmd.resp_type & MMC_RSP_PRESENT != 0 {
             unsafe { 
                 *rsp0 = ptr::read_volatile(&self.cmd_rsp);
-                debug_println!("Meson response value: {:#034b} (binary), {:#X} (hex)", *rsp0, *rsp0);
-                debug_println!("Meson received 1 response back!");
+                // debug_println!("Meson response value: {:#034b} (binary), {:#X} (hex)", *rsp0, *rsp0);
+                // debug_println!("Meson received 1 response back!");
             }
         }
     }
@@ -256,7 +262,9 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         let mut data_addr: u32 = 0u32;
         if let Some(mmc_data) = data {
             // TODO: Check what if the addr is u32::MAX, will the sdcard still working?
-            if mmc_data.blocksize != 512 || mmc_data.addr > (u32::MAX as u64) {
+            if mmc_data.blocksize != MESON_SDCARD_SECTOR_SIZE || mmc_data.addr >= (WRITE_ADDR_UPPER as u64) 
+                || mmc_data.blockcnt == 0 || mmc_data.blockcnt > MAX_BLOCK_PER_TRANSFER  {
+                    debug_println!("SDMMC: INVALID INPUT VARIABLE!");
                 return Err(SdmmcHalError::EINVAL);
             }
             // Depend on the flag and hardware, the cache should be flushed accordingly
@@ -283,21 +291,22 @@ impl SdmmcHardware for MesonSdmmcRegisters {
 
     fn sdmmc_receive_response(&self, cmd: &SdmmcCmd, response: &mut [u32; 4]) -> Result<(), SdmmcHalError> {
         let status: u32;
-        unsafe { status = ptr::read_volatile(&self.status); }
 
-        debug_println!("Meson status value: {:#034b} (binary), {:#X} (hex)", status, status);
+        unsafe { status = ptr::read_volatile(&self.status); }
 
         if (status & STATUS_END_OF_CHAIN) == 0 {
             return Err(SdmmcHalError::EBUSY);
         }
 
         if (status & STATUS_RESP_TIMEOUT) != 0 {
+            debug_println!("SDMMC: CARD TIMEOUT!");
             return Err(SdmmcHalError::ETIMEDOUT);
         }
         
         let mut return_val: Result<(), SdmmcHalError> = Ok(());
 
         if (status & STATUS_ERR_MASK) != 0 {
+            debug_println!("SDMMC: CARD IO ERROR!");
             return_val = Err(SdmmcHalError::EIO);
         }
 
