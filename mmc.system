@@ -1,14 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-    Copyright 2024, UNSW
-    SPDX-License-Identifier: BSD-2-Clause
--->
 <system>
+<memory_region name="blk_driver_config" size="0x1000" page_size="0x1000" />
+<memory_region name="blk_driver_request" size="0x200_000" page_size="0x200_000"/>
+<memory_region name="blk_driver_response" size="0x200_000" page_size="0x200_000"/>
+
+
     <memory_region name="sdmmc" size="0x1000" phys_addr="0xffe05000" />
     <memory_region name="data_region" size="0x10000" phys_addr="0x50000000" />
     <protection_domain name="sdmmc_driver" priority="100" >
         <program_image path="sdmmc_driver.elf" />
         <map mr="sdmmc" vaddr="0xffe05000" perms="rw" cached="false" />
         <map mr="data_region" vaddr="0x50000000" perms="rw" cached="false" />
+        <map mr="blk_driver_config" vaddr="0x40000000" perms="rw" cached="false" setvar_vaddr="blk_config"     />
+        <map mr="blk_driver_request"    vaddr="0x40200000" perms="rw" cached="false" setvar_vaddr="blk_req_queue"  />
+        <map mr="blk_driver_response"   vaddr="0x40400000" perms="rw" cached="false" setvar_vaddr="blk_resp_queue" />
     </protection_domain>
 </system>

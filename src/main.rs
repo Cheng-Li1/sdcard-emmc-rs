@@ -64,40 +64,7 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     }
     let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
     let protocol: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(meson_hal);
-
-    // Code block to test block read
-    /* 
-    {
-        let test_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
-        let test: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(test_hal);
-        debug_println!("Read and Print out the content in sector 0, sector 1");
-        let mut future = Box::pin(test.read_block(2, 0, 0x50000000));
-        let waker = create_dummy_waker();
-        let mut cx = Context::from_waker(&waker);
-        let future_ref = &mut future;
-        // TODO: I can get rid of this loop once I configure out how to enable interrupt from Linux kernel driver
-        loop {
-            match future_ref.as_mut().poll(&mut cx) {
-                Poll::Ready((result, sdmmc)) => {
-                    // debug_println!("SDMMC_DRIVER: Future completed with result");
-                    if result.is_err() {
-                        debug_println!("SDMMC_DRIVER: DISK ERROR ENCOUNTERED, possiblely retry!");
-                    }
-                    else {
-                        debug_println!("Content in sector 0:");
-                        print_one_block(0x50000000 as *const u8);
-                        debug_println!("Content in sector 1:");
-                        print_one_block((0x50000000 + 512) as *const u8);
-                    }
-                    break;
-                }
-                Poll::Pending => {
-                    // debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
-                }
-            }
-        }
-    }
-    */
+    
     HandlerImpl {
         future: None,
         sdmmc: Some(protocol),
@@ -245,3 +212,38 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
         Ok(())
     }
 }
+
+/*
+    // Code block to test block read
+
+    {
+        let test_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
+        let test: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(test_hal);
+        debug_println!("Read and Print out the content in sector 0, sector 1");
+        let mut future = Box::pin(test.read_block(2, 0, 0x50000000));
+        let waker = create_dummy_waker();
+        let mut cx = Context::from_waker(&waker);
+        let future_ref = &mut future;
+        // TODO: I can get rid of this loop once I configure out how to enable interrupt from Linux kernel driver
+        loop {
+            match future_ref.as_mut().poll(&mut cx) {
+                Poll::Ready((result, sdmmc)) => {
+                    // debug_println!("SDMMC_DRIVER: Future completed with result");
+                    if result.is_err() {
+                        debug_println!("SDMMC_DRIVER: DISK ERROR ENCOUNTERED, possiblely retry!");
+                    }
+                    else {
+                        debug_println!("Content in sector 0:");
+                        print_one_block(0x50000000 as *const u8);
+                        debug_println!("Content in sector 1:");
+                        print_one_block((0x50000000 + 512) as *const u8);
+                    }
+                    break;
+                }
+                Poll::Pending => {
+                    // debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
+                }
+            }
+        }
+    }
+     */
