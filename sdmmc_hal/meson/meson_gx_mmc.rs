@@ -300,9 +300,10 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         self.meson_mmc_set_up_cmd_cfg_and_cfg(&cmd, data);
 
         // Reset status register before executing the cmd
+        // If we keep this line of code, do we still need to manually ack interrupts???
         unsafe { ptr::write_volatile(&mut self.status, STATUS_MASK); }
 
-        // For testing
+        // Clear the response register, for testing & debugging
         unsafe { ptr::write_volatile(&mut self.cmd_rsp, 0u32); }
 
         unsafe { ptr::write_volatile(&mut self.cmd_arg, cmd.cmdarg); }
