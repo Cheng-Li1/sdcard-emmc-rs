@@ -90,7 +90,19 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
     /// In Rust, it is actually very hard to manage long live future object that must be created
     /// by borrowing 
     fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {
-        debug_println!("SDMMC_DRIVER: MESSAGE FROM CHANNEL: {}", channel.index());
+        // debug_println!("SDMMC_DRIVER: MESSAGE FROM CHANNEL: {}", channel.index());
+
+        if channel.index() != INTERRUPT.index() && channel.index() != BLK_VIRTUALIZER.index() {
+            debug_println!("SDMMC_DRIVER: Unknown channel sent me message: {}", channel.index());
+        }
+
+        if channel.index() == INTERRUPT.index() {
+            let err = channel.irq_ack();
+            if err.is_err() {
+                panic!("SDMMC: Cannot acknowledge interrupt for CPU!")
+            }
+        }
+
         let mut notify_virt: bool = false;
         loop {
             // Polling if receive any notification, it is to poll even the notification is not from the interrupt as polling is cheap
@@ -99,6 +111,7 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                     let waker = create_dummy_waker();
                     let mut cx = Context::from_waker(&waker);
                     // TODO: I can get rid of this loop once I configure out how to enable interrupt from Linux kernel driver
+                    // debug_println!("SDMMC_DRIVER: Polling future!");
                     match future.as_mut().poll(&mut cx) {
                         Poll::Ready((result, sdmmc)) => {
                             // debug_println!("SDMMC_DRIVER: Future completed with result");
@@ -153,6 +166,8 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                         &mut request.id as *mut u32,
                     );
                 }
+                request.block_number = request.block_number * SDDF_TO_REAL_SECTOR;
+                request.count = request.count * SDDF_TO_REAL_SECTOR as u16;
                 // Print the retrieved values
                 /*
                 debug_println!("io_or_offset: 0x{:x}", io_or_offset);// Simple u64
@@ -218,6 +233,7 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
             }
         }
         if notify_virt == true {
+            // debug_println!("SDMMC_DRIVER: Notify the BLK_VIRTUALIZER!");
             BLK_VIRTUALIZER.notify();
         }
         Ok(())

@@ -95,6 +95,38 @@ pub trait SdmmcHardware {
     }
 }
 
+fn send_cmd_and_receive_resp<T: SdmmcHardware>(
+    hardware: &mut T,
+    cmd: &SdmmcCmd,
+    data: Option<&MmcData>,
+    resp: &mut [u32; 4]
+) -> Result<(), SdmmcHalError> {
+    // Send the command using the hardware layer
+    let mut res = hardware.sdmmc_send_command(cmd, data);
+    if res.is_err() {
+        return res;
+    }
+
+    // TODO: Change it to use the sleep function provided by the hardware layer
+    let mut retry: u32 = 1000000;
+    
+    while retry > 0 {
+        // Try to receive the response
+        res = hardware.sdmmc_receive_response(cmd, resp);
+        
+        if let Err(SdmmcHalError::EBUSY) = res {
+            // Busy response, retry
+            retry -= 1;
+            // hardware.sleep(1); // Placeholder: Implement a sleep function in SdmmcHardware trait
+        } else {
+            // If any other error or success, break the loop
+            break;
+        }
+    }
+
+    res // Return the final result (Ok or Err)
+}
+
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
 pub struct SdmmcProtocol<'a, T: SdmmcHardware> {
     pub hardware: &'a mut T,
@@ -159,6 +191,11 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             };
             let future = SdmmcCmdFuture::new(self.hardware, &cmd, Some(&data), &mut resp);
             res = future.await;
+
+            // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
+            // for read/write requests?
+            let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+
             return (res, Some(self));
         }
         else {
@@ -169,6 +206,11 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             };
             let future = SdmmcCmdFuture::new(self.hardware, &cmd, Some(&data), &mut resp);
             res = future.await;
+
+            // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
+            // for read/write requests?
+            let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+    
             if let Ok(()) = res {
                 // Uboot code for determine response type in this case
                 // cmd.resp_type = (IS_SD(mmc) || write) ? MMC_RSP_R1b : MMC_RSP_R1;
@@ -180,6 +222,11 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                 };
                 let future = SdmmcCmdFuture::new(self.hardware, &cmd, None, &mut resp);
                 res = future.await;
+
+                // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
+                // for read/write requests?
+                let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+
                 return (res.map_err(|_| SdmmcHalError::ESTOPCMD), Some(self));
             } else {
                 return (res, Some(self));
@@ -212,6 +259,11 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             };
             let future = SdmmcCmdFuture::new(self.hardware, &cmd, Some(&data), &mut resp);
             res = future.await;
+
+            // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
+            // for read/write requests?
+            let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+
             return (res, Some(self));
         }
         else {
@@ -222,6 +274,11 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             };
             let future = SdmmcCmdFuture::new(self.hardware, &cmd, Some(&data), &mut resp);
             res = future.await;
+
+            // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
+            // for read/write requests?
+            let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+
             if let Ok(()) = res {
                 // Uboot code for determine response type in this case
                 // cmd.resp_type = (IS_SD(mmc) || write) ? MMC_RSP_R1b : MMC_RSP_R1;
@@ -233,6 +290,11 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                 };
                 let future = SdmmcCmdFuture::new(self.hardware, &cmd, None, &mut resp);
                 res = future.await;
+                
+                // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
+                // for read/write requests?
+                let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+
                 return (res.map_err(|_| SdmmcHalError::ESTOPCMD), Some(self));
             } else {
                 return (res, Some(self));
