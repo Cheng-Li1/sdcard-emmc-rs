@@ -5,11 +5,16 @@ use sel4_microkit::debug_println;
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
 
+macro_rules! div_round_up {
+    ($n:expr, $d:expr) => {
+        (($n + $d - 1) / $d)
+    };
+}
+
 // Constants translated from the C version
 // Clock related constant
 const SD_EMMC_CLKSRC_24M: u32 = 24000000;       // 24 MHz
 const SD_EMMC_CLKSRC_DIV2: u32 = 1000000000;    // 1 GHz
-
 const CLK_MAX_DIV: u32 = 63;
 const CLK_SRC_24M: u32 = 0 << 6;
 const CLK_SRC_DIV2: u32 = 1 << 6;
@@ -20,12 +25,6 @@ const CLK_CO_PHASE_270: u32 = 3 << 8;
 const CLK_TX_PHASE_000: u32 = 0 << 10;
 const CLK_TX_PHASE_180: u32 = 2 << 10;
 const CLK_ALWAYS_ON: u32 = 1 << 24;
-
-macro_rules! div_round_up {
-    ($n:expr, $d:expr) => {
-        (($n + $d - 1) / $d)
-    };
-}
 
 // CMD_CFG constants
 const CMD_CFG_CMD_INDEX_SHIFT: u32 = 24;

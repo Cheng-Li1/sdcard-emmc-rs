@@ -24,6 +24,8 @@ const SDDF_TO_REAL_SECTOR: u32 = SDDF_TRANSFER_SIZE/SDCARD_SECTOR_SIZE;
 
 const RETRY_CHANCE: u16 = 5;
 
+// Debug function for printing out content in one block
+#[allow(dead_code)]
 fn print_one_block(ptr: *const u8) {
     unsafe {
         // Iterate over the 512 bytes and print each one in hexadecimal format
