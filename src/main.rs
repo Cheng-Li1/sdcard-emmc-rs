@@ -97,8 +97,6 @@ struct HandlerImpl<'a, T: SdmmcHardware> {
 impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
     type Error = Infallible;
 
-    /// In Rust, it is actually very hard to manage long live future object that must be created
-    /// by borrowing
     fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {
         // debug_println!("SDMMC_DRIVER: MESSAGE FROM CHANNEL: {}", channel.index());
 
@@ -107,6 +105,7 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                 "SDMMC_DRIVER: Unknown channel sent me message: {}",
                 channel.index()
             );
+            return Ok(());
         }
 
         if channel.index() == INTERRUPT.index() {
@@ -123,8 +122,6 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                 if let Some(future) = &mut self.future {
                     let waker = create_dummy_waker();
                     let mut cx = Context::from_waker(&waker);
-                    // TODO: I can get rid of this loop once I configure out how to enable interrupt from Linux kernel driver
-                    // debug_println!("SDMMC_DRIVER: Polling future!");
                     match future.as_mut().poll(&mut cx) {
                         Poll::Ready((result, sdmmc)) => {
                             // debug_println!("SDMMC_DRIVER: Future completed with result");
@@ -146,7 +143,7 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                                 unsafe {
                                     blk_enqueue_resp_helper(
                                         resp_status,
-                                        request.success_count,
+                                        request.success_count / SDDF_TO_REAL_SECTOR,
                                         request.id,
                                     );
                                 }
@@ -157,7 +154,7 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                                 unsafe {
                                     blk_enqueue_resp_helper(
                                         resp_status,
-                                        request.success_count,
+                                        request.success_count / SDDF_TO_REAL_SECTOR,
                                         request.id,
                                     );
                                 }
