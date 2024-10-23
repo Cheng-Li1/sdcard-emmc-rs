@@ -6,3 +6,6 @@ edition = "2021"
 [lib]
 name = "sdmmc_protocol"
 path = "lib.rs"
+
+[dependencies]
+bitflags = "2.6.0"
