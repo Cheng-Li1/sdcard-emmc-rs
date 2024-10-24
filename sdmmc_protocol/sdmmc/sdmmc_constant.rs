@@ -1,4 +1,4 @@
-#![allow(dead_code)]  // Allow dead code for the entire module
+#![allow(dead_code)] // Allow dead code for the entire module
 
 // Define constants for MMC data flags
 pub const MMC_DATA_READ: u32 = 1;

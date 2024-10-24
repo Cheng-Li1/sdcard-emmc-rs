@@ -4,7 +4,7 @@ use bitflags::bitflags;
 // In this Rust based protocol layer we use u128.
 // I have thought about whether I should seperate the SdmmcHostCapability to two structs, one for sdcard, one for eMMC
 // But give up this idea because I do not know if there are such host that support both sdcard and eMMC
-pub(crate) struct SdmmcHostCapability(u128);
+pub(crate) struct SdmmcHostCapability(pub u128);
 
 bitflags! {
     /// Represents the host capabilities for SD/MMC controllers

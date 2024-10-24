@@ -6,8 +6,7 @@ use core::{
 
 use sdmmc_capability::SdmmcHostCapability;
 use sdmmc_constant::{
-    MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_STOP_TRANSMISSION,
-    MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK,
+    MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK
 };
 
 pub mod sdmmc_capability;
@@ -144,19 +143,19 @@ pub enum MmcChipSelect {
 pub struct EmmcSettings {
     /// The drive strength of the host driver, typically relevant for eMMC devices.
     ///
-    /// - The drive strength affects signal integrity and is selected based on the card's 
-    ///   operating conditions, such as bus load and speed. 
+    /// - The drive strength affects signal integrity and is selected based on the card's
+    ///   operating conditions, such as bus load and speed.
     /// - The eMMC specification defines four possible driver types (A, B, C, D) that
     ///   optimize for different use cases and electrical environments:
     ///   - `DriverType::TypeB`: Default driver strength for most cases.
-    ///   - `DriverType::TypeA`, `TypeC`, `TypeD`: Other driver types based on signal 
+    ///   - `DriverType::TypeA`, `TypeC`, `TypeD`: Other driver types based on signal
     ///     strength requirements.
     pub drv_type: MmcDriverType,
 
     /// Specifies whether **HS400 Enhanced Strobe** mode is enabled.
     ///
-    /// - Enhanced Strobe is used in **HS400** mode for eMMC devices to improve data 
-    ///   reliability at high speeds. It allows more accurate data capture by aligning 
+    /// - Enhanced Strobe is used in **HS400** mode for eMMC devices to improve data
+    ///   reliability at high speeds. It allows more accurate data capture by aligning
     ///   strobe signals with data.
     /// - This is only relevant for eMMC cards in **HS400ES** mode.
     pub enhanced_strobe: bool,
@@ -167,10 +166,10 @@ pub struct EmmcSettings {
 pub struct SpiSettings {
     /// The chip select mode used in **SPI mode** communication.
     ///
-    /// - This field is relevant only when the SD/MMC host controller is operating in **SPI mode**. 
+    /// - This field is relevant only when the SD/MMC host controller is operating in **SPI mode**.
     ///   In **native SD/MMC protocol**, this field is not used.
     ///
-    /// - The **chip select (CS)** pin is used to activate or deactivate the SD/MMC card on the SPI bus. 
+    /// - The **chip select (CS)** pin is used to activate or deactivate the SD/MMC card on the SPI bus.
     ///   It allows the host to select which device it is communicating with when multiple devices share the same bus.
     ///
     /// - Possible values:
@@ -178,24 +177,24 @@ pub struct SpiSettings {
     ///   - `MmcChipSelect::High`: The chip select pin is driven high, indicating that the card is not selected.
     ///   - `MmcChipSelect::Low`: The chip select pin is driven low, indicating that the card is selected and active.
     ///
-    /// **Note**: 
-    /// - In **native SD/MMC mode**, communication happens via dedicated **command and data lines** without the need for chip select. 
+    /// **Note**:
+    /// - In **native SD/MMC mode**, communication happens via dedicated **command and data lines** without the need for chip select.
     /// - In most applications, **SPI mode** is less commonly used, especially in high-performance systems.
     pub chip_select: MmcChipSelect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcProtocolState {
-    /// The timing specification that dictates how data is transferred between the host 
+struct MmcState {
+    /// The timing specification that dictates how data is transferred between the host
     /// and the card.
     ///
-    /// - The timing mode defines the protocol and speed class for communication, such as 
+    /// - The timing mode defines the protocol and speed class for communication, such as
     ///   legacy modes, high-speed modes, or ultra-high-speed modes.
     /// - Examples include:
     ///   - `Timing::Legacy`: Legacy slower transfer mode.
     ///   - `Timing::SdHs`: SD high-speed mode.
     ///   - `Timing::MmcHs200`: eMMC HS200 mode for high-speed data transfers.
-    pub timing: MmcTiming,
+    timing: MmcTiming,
 
     /// The width of the data bus used for communication between the host and the card.
     ///
@@ -206,43 +205,43 @@ pub struct MmcProtocolState {
     ///   - `BusWidth::Width1`: 1-bit data width (lowest speed, used during initialization).
     ///   - `BusWidth::Width4`: 4-bit data width (common for SD cards).
     ///   - `BusWidth::Width8`: 8-bit data width (mainly for eMMC).
-    pub bus_width: MmcBusWidth,
+    bus_width: MmcBusWidth,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// The `MmcIos` struct represents the I/O settings for the SD/MMC controller, 
+/// The `MmcIos` struct represents the I/O settings for the SD/MMC controller,
 /// configuring how the host communicates with the card during various operations.
 pub struct MmcIos {
     /// The clock rate (in Hz) used for communication with the SD/MMC card.
-    /// 
+    ///
     /// - This field specifies the frequency at which data is transferred between
-    ///   the host and the card. The clock can vary depending on the mode the card 
+    ///   the host and the card. The clock can vary depending on the mode the card
     ///   is in (e.g., initialization, data transfer).
-    /// - Typically, initialization occurs at a lower clock rate, and high-speed 
+    /// - Typically, initialization occurs at a lower clock rate, and high-speed
     ///   data transfer occurs at higher rates.
     pub clock: u64,
 
     /// The voltage range (VDD) used for powering the SD/MMC card.
     ///
-    /// - This field stores the selected voltage range in a bit-encoded format. 
+    /// - This field stores the selected voltage range in a bit-encoded format.
     ///   It indicates the voltage level the card is operating at.
     /// - Common voltage levels are 3.3V, 1.8V, and sometimes 1.2V (for eMMC).
     /// - Cards often negotiate their operating voltage during initialization.
     pub vdd: u16,
 
-    /// The power delay (in milliseconds) used after powering the card to ensure 
+    /// The power delay (in milliseconds) used after powering the card to ensure
     /// stable operation.
     ///
-    /// - After powering up the card, the host controller typically waits for a 
-    ///   certain period before initiating communication to ensure that the card's 
+    /// - After powering up the card, the host controller typically waits for a
+    ///   certain period before initiating communication to ensure that the card's
     ///   power supply is stable.
     /// - This delay ensures the card is ready to respond to commands.
     pub power_delay_ms: u32,
 
     /// The current power supply mode for the SD/MMC card.
     ///
-    /// - This field indicates whether the card is powered on, powered off, or 
-    ///   being powered up. The power mode can affect the card's internal state 
+    /// - This field indicates whether the card is powered on, powered off, or
+    ///   being powered up. The power mode can affect the card's internal state
     ///   and availability for communication.
     /// - Possible values:
     ///   - `PowerMode::Off`: The card is completely powered off.
@@ -263,7 +262,7 @@ pub struct MmcIos {
 
     /// The signaling voltage level used for communication with the card.
     ///
-    /// - Different SD/MMC cards support different signaling voltage levels. This field 
+    /// - Different SD/MMC cards support different signaling voltage levels. This field
     ///   indicates the voltage level used for signaling between the host and the card.
     /// - Common voltage levels:
     ///   - `SignalVoltage::Voltage330`: 3.3V signaling.
@@ -273,7 +272,7 @@ pub struct MmcIos {
 
     /// The bus mode for communication between the host and the card.
     ///
-    /// This field defines how the host drives the command lines when communicating with the SD/MMC card. 
+    /// This field defines how the host drives the command lines when communicating with the SD/MMC card.
     /// It is mainly relevant during the initialization process or in certain low-speed configurations.
     ///
     /// - **Open-Drain Mode** (`MmcBusMode::OpenDrain`):
@@ -285,7 +284,7 @@ pub struct MmcIos {
     ///   - In push-pull mode, the host actively drives the command line both high and low.
     ///   - This mode is used for **high-speed data transfers** after initialization, where higher performance is required.
     ///
-    /// Typically, **push-pull mode** is used once the card is fully initialized and the bus is stable. 
+    /// Typically, **push-pull mode** is used once the card is fully initialized and the bus is stable.
     /// In most cases, you don't need to manually configure the bus mode because modern controllers handle this automatically.
     pub bus_mode: Option<MmcBusMode>,
 
@@ -300,11 +299,11 @@ pub struct MmcIos {
     pub spi: Option<SpiSettings>,
 }
 
-struct host_capability {
+pub struct HostInfo {
     max_frequency: u64,
-    min_frequency: u64, 
-    max_block_per_req: u32, 
-    host_cap: SdmmcHostCapability,
+    min_frequency: u64,
+    max_block_per_req: u32,
+    enabled_irq: u32,
 }
 
 /// Program async Rust can be very dangerous if you do not know what is happening understand the hood
@@ -314,7 +313,19 @@ pub trait SdmmcHardware {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
-    fn sdmmc_init(&mut self) -> Result<(), SdmmcHalError> {
+    fn sdmmc_init(
+        &mut self,
+    ) -> (
+        Result<(), SdmmcHalError>,
+        Option<MmcIos>,
+        Option<HostInfo>,
+        Option<u128>,
+    ) {
+        return (Err(SdmmcHalError::ENOTIMPLEMENTED), None, None, None);
+    }
+
+    // Change the clock, return the value or do not change it at all
+    fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
@@ -351,72 +362,75 @@ pub trait SdmmcHardware {
     }
 }
 
-// Not used right now, but would be useful in the future once we want to execute some command synchronously
-fn send_cmd_and_receive_resp<T: SdmmcHardware>(
-    hardware: &mut T,
-    cmd: &SdmmcCmd,
-    data: Option<&MmcData>,
-    resp: &mut [u32; 4],
-) -> Result<(), SdmmcHalError> {
-    // Send the command using the hardware layer
-    let mut res = hardware.sdmmc_send_command(cmd, data);
-    if res.is_err() {
-        return res;
-    }
-
-    // TODO: Change it to use the sleep function provided by the hardware layer
-    // This is a busy poll retry, we could poll infinitely if we trust the device to be correct
-    let mut retry: u32 = 1000000;
-
-    while retry > 0 {
-        // Try to receive the response
-        res = hardware.sdmmc_receive_response(cmd, resp);
-
-        if let Err(SdmmcHalError::EBUSY) = res {
-            // Busy response, retry
-            retry -= 1;
-            // hardware.sleep(1); // Placeholder: Implement a sleep function in SdmmcHardware trait
-        } else {
-            // If any other error or success, break the loop
-            break;
-        }
-    }
-
-    res // Return the final result (Ok or Err)
-}
-
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
 pub struct SdmmcProtocol<'a, T: SdmmcHardware> {
     pub hardware: &'a mut T,
-    enabled_irq: u32,
+
     mmc_ios: MmcIos,
-    cap: host_capability,
+    host_info: HostInfo,
+
+    cap: SdmmcHostCapability,
+    card_state: Option<MmcState>,
 }
 
 impl<T> Unpin for SdmmcProtocol<'_, T> where T: Unpin + SdmmcHardware {}
 
 impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
-    pub fn new(hardware: &'a mut T) -> Self {
+    pub fn new(hardware: &'a mut T) -> Result<Self, SdmmcHalError> {
+        let (res, ios, info, cap) = hardware.sdmmc_init();
+        res.unwrap_err();
+        let host_cap: SdmmcHostCapability =
+            SdmmcHostCapability(cap.ok_or(SdmmcHalError::ENOTIMPLEMENTED)?);
+        let mmc_ios: MmcIos = ios.ok_or(SdmmcHalError::ENOTIMPLEMENTED)?;
+        let host_info: HostInfo = info.ok_or(SdmmcHalError::ENOTIMPLEMENTED)?;
 
-        SdmmcProtocol {
+        Ok(SdmmcProtocol {
             hardware,
-            enabled_irq: 0,
-        }
+            mmc_ios,
+            host_info,
+            cap: host_cap,
+            card_state: None,
+        })
     }
 
     // Funtion that is not completed
     pub fn setup_card(&mut self) -> Result<(), SdmmcHalError> {
+        if self.mmc_ios.vdd != 330 {
+            self.hardware.sdmmc_power_up()?;
+            self.mmc_ios.vdd = 330;
+        }
+
+        self.hardware.sdmmc_config_clock(freq)?;
+
+        let mut cmd = SdmmcCmd {
+            cmdidx: MMC_CMD_GO_IDLE_STATE,
+            resp_type: MMC_RSP_NONE,
+            cmdarg: 0,
+        };
+
+        // This command does not expect a response
+        self.hardware.sdmmc_send_command(&cmd, None)?;
+
+        cmd = SdmmcCmd {
+            cmdidx: 8,
+            resp_type: MMC_RSP_R7,
+            cmdarg: 0x000001AA, // Voltage supply and check pattern
+        };
+        
+        SdmmcProtocol::<'a, T>::send_cmd_and_receive_resp(self.hardware, );
+
         Ok(())
     }
 
     pub fn enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {
         let res = self.hardware.sdmmc_enable_interrupt(irq_to_enable);
-        self.enabled_irq = *irq_to_enable;
+        self.host_info.enabled_irq = *irq_to_enable;
         res
     }
 
     pub fn ack_interrupt(&mut self) -> Result<(), SdmmcHalError> {
-        self.hardware.sdmmc_ack_interrupt(&self.enabled_irq)
+        self.hardware
+            .sdmmc_ack_interrupt(&self.host_info.enabled_irq)
     }
 
     pub async fn read_block(
@@ -460,7 +474,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
             // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
             // for read/write requests?
-            let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+            let _ = self
+                .hardware
+                .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
 
             return (res, Some(self));
         } else {
@@ -474,7 +490,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
             // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
             // for read/write requests?
-            let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+            let _ = self
+                .hardware
+                .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
 
             if let Ok(()) = res {
                 // Uboot code for determine response type in this case
@@ -490,7 +508,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
                 // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
                 // for read/write requests?
-                let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+                let _ = self
+                    .hardware
+                    .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
 
                 return (res.map_err(|_| SdmmcHalError::ESTOPCMD), Some(self));
             } else {
@@ -532,7 +552,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
             // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
             // for read/write requests?
-            let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+            let _ = self
+                .hardware
+                .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
 
             return (res, Some(self));
         } else {
@@ -546,7 +568,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
             // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
             // for read/write requests?
-            let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+            let _ = self
+                .hardware
+                .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
 
             if let Ok(()) = res {
                 // Uboot code for determine response type in this case
@@ -562,13 +586,52 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
                 // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
                 // for read/write requests?
-                let _ = self.hardware.sdmmc_ack_interrupt(&self.enabled_irq);
+                let _ = self
+                    .hardware
+                    .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
 
                 return (res.map_err(|_| SdmmcHalError::ESTOPCMD), Some(self));
             } else {
                 return (res, Some(self));
             }
         }
+    }
+
+    // Not used right now, but would be useful in the future once we want to execute some command synchronously
+    fn send_cmd_and_receive_resp(
+        hardware: &mut T,
+        cmd: &SdmmcCmd,
+        data: Option<&MmcData>,
+        resp: &mut [u32; 4],
+    ) -> Result<(), SdmmcHalError> {
+        // TODO: Add temporarily disable interrupt here
+
+        // Send the command using the hardware layer
+        let mut res = hardware.sdmmc_send_command(cmd, data);
+        if res.is_err() {
+            return res;
+        }
+
+        // TODO: Change it to use the sleep function provided by the hardware layer
+        // This is a busy poll retry, we could poll infinitely if we trust the device to be correct
+        let mut retry: u32 = 1000000;
+
+        while retry > 0 {
+            // Try to receive the response
+            res = hardware.sdmmc_receive_response(cmd, resp);
+
+            if let Err(SdmmcHalError::EBUSY) = res {
+                // Busy response, retry
+                retry -= 1;
+                // hardware.sleep(1); // Placeholder: Implement a sleep function in SdmmcHardware trait
+            } else {
+                // If any other error or success, break the loop
+                break;
+            }
+        }
+
+        // TODO: Add renable interrupt here
+        res // Return the final result (Ok or Err)
     }
 }
 
