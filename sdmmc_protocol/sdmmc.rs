@@ -4,9 +4,12 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
-use sdmmc_capability::SdmmcHostCapability;
+use sdmmc_capability::{SdmmcHostCapability, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_UHS_SDR12};
 use sdmmc_constant::{
-    MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK
+    INIT_CLOCK_RATE, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK,
+    MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK,
+    MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R,
+    SD_CMD_APP_SEND_OP_COND, SD_CMD_SEND_IF_COND,
 };
 
 pub mod sdmmc_capability;
@@ -37,6 +40,7 @@ pub enum SdmmcHalError {
     ETIMEDOUT,
     EINVAL,
     EIO,
+    EUNSUPPORTEDCARD,
     ENOTIMPLEMENTED,
     // This error should not be triggered unless there are bugs in program
     EUNDEFINED,
@@ -329,6 +333,14 @@ pub trait SdmmcHardware {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
+    fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcHalError> {
+        return Err(SdmmcHalError::ENOTIMPLEMENTED);
+    }
+
+    fn sdmmc_tune_signal_voltage(&mut self, voltage: u32) -> Result<(), SdmmcHalError> {
+        return Err(SdmmcHalError::ENOTIMPLEMENTED);
+    }
+
     fn sdmmc_send_command(
         &mut self,
         cmd: &SdmmcCmd,
@@ -350,10 +362,6 @@ pub trait SdmmcHardware {
     }
 
     fn sdmmc_ack_interrupt(&mut self, irq_enabled: &u32) -> Result<(), SdmmcHalError> {
-        return Err(SdmmcHalError::ENOTIMPLEMENTED);
-    }
-
-    fn sdmmc_tune_signal_voltage(&mut self, voltage: u32) -> Result<(), SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
@@ -395,12 +403,26 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
     // Funtion that is not completed
     pub fn setup_card(&mut self) -> Result<(), SdmmcHalError> {
+        {
+            let mut irq: u32 = 0;
+            let _ = self.hardware.sdmmc_enable_interrupt(&mut irq);
+        }
+
+        // TODO: Different sdcard and eMMC support different voltages, figure those out
         if self.mmc_ios.vdd != 330 {
             self.hardware.sdmmc_power_up()?;
             self.mmc_ios.vdd = 330;
         }
 
-        self.hardware.sdmmc_config_clock(freq)?;
+        let clock = self.hardware.sdmmc_config_clock(INIT_CLOCK_RATE)?;
+
+        self.mmc_ios.clock = clock;
+
+        self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width1)?;
+
+        self.mmc_ios.bus_width = MmcBusWidth::Width1;
+
+        let mut resp: [u32; 4] = [0; 4];
 
         let mut cmd = SdmmcCmd {
             cmdidx: MMC_CMD_GO_IDLE_STATE,
@@ -412,13 +434,88 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         self.hardware.sdmmc_send_command(&cmd, None)?;
 
         cmd = SdmmcCmd {
-            cmdidx: 8,
+            cmdidx: SD_CMD_SEND_IF_COND,
             resp_type: MMC_RSP_R7,
             cmdarg: 0x000001AA, // Voltage supply and check pattern
         };
-        
-        SdmmcProtocol::<'a, T>::send_cmd_and_receive_resp(self.hardware, );
 
+        let res =
+            SdmmcProtocol::<'a, T>::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp);
+
+        // If the result is OK and the resp is 0x1AA, the card we are initializing is a SDHC/SDXC
+        // If the result is error, it is either the voltage not being set up correctly, which mean a bug in hardware layer
+        // or the card is eMMC or legacy sdcard
+        // For now, we only deal with the situation it is a sdcard
+        if res.is_ok() && resp[0] == 0x1AA {
+            self.setup_sdhc_cont()
+        } else {
+            // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
+            Err(SdmmcHalError::EUNSUPPORTEDCARD)
+        }
+    }
+
+    fn setup_sdhc_cont(&mut self) -> Result<(), SdmmcHalError> {
+        let mut cmd: SdmmcCmd;
+        let mut resp: [u32; 4] = [0; 4];
+        // Uboot define this value to be 1000...
+        let mut timeout: u16 = 1000;
+        loop {
+            // Prepare CMD55 (APP_CMD)
+            cmd = SdmmcCmd {
+                cmdidx: MMC_CMD_APP_CMD,
+                resp_type: MMC_RSP_R1,
+                cmdarg: 0,
+            };
+
+            // Send CMD55
+            SdmmcProtocol::<'a, T>::send_cmd_and_receive_resp(
+                self.hardware,
+                &cmd,
+                None,
+                &mut resp,
+            )?;
+
+            cmd = SdmmcCmd {
+                cmdidx: SD_CMD_APP_SEND_OP_COND,
+                resp_type: MMC_RSP_R3,
+                cmdarg: 1,
+            };
+
+            // Set the HCS bit if version is SD Version 2
+            // since you have reached here, the card would be at least SD Version 2
+            cmd.cmdarg |= OCR_HCS;
+
+            // TODO: Right now the operating voltage is hardcoded, could this have unintended behavior for legacy device
+            // And maybe change this when we are trying to support UHS I
+            cmd.cmdarg |= (MMC_VDD_33_34 | MMC_VDD_32_33) & 0xff8000;
+
+            if self.cap.contains(sdmmc_capability::SdmmcHostCapability(
+                MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
+            )) {
+                cmd.cmdarg |= OCR_S18R;
+            }
+
+            // Send ACMD41
+            SdmmcProtocol::<'a, T>::send_cmd_and_receive_resp(
+                self.hardware,
+                &cmd,
+                None,
+                &mut resp,
+            )?;
+
+            // Check if card is ready (OCR_BUSY bit)
+            if (resp[0] & OCR_BUSY) != 0 {
+                break;
+            }
+
+            // Timeout handling
+            if timeout <= 0 {
+                return Err(SdmmcHalError::EUNSUPPORTEDCARD);
+            }
+            timeout -= 1;
+        }
+
+        // Continue working on it next week
         Ok(())
     }
 

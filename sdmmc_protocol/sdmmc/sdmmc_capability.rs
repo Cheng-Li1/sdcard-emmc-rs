@@ -28,6 +28,8 @@ bitflags! {
         const MMC_CAP_4_BIT_DATA      = MMC_CAP_4_BIT_DATA;
         const MMC_CAP_8_BIT_DATA      = MMC_CAP_8_BIT_DATA;
         const MMC_CAP_BUS_WIDTH_TEST  = MMC_CAP_BUS_WIDTH_TEST;
+
+        const MMC_CAP_VOLTAGE_TUNE    = MMC_CAP_VOLTAGE_TUNE;
         const MMC_CAP_CMD23           = MMC_CAP_CMD23;
         const MMC_CAP_AUTO_STOP       = MMC_CAP_AUTO_STOP;
     }
@@ -54,5 +56,6 @@ pub const MMC_CAP_8_BIT_DATA: u128 = 1 << 17;
 
 pub const MMC_CAP_BUS_WIDTH_TEST: u128 = 1 << 18;
 
+pub const MMC_CAP_VOLTAGE_TUNE: u128 = 1 << 29;
 pub const MMC_CAP_CMD23: u128 = 1 << 30;
 pub const MMC_CAP_AUTO_STOP: u128 = 1 << 31;
