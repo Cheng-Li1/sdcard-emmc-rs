@@ -6,14 +6,13 @@ use core::{
 
 use sdmmc_capability::{SdmmcHostCapability, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_UHS_SDR12};
 use sdmmc_constant::{
-    INIT_CLOCK_RATE, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK,
-    MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK,
-    MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R,
-    SD_CMD_APP_SEND_OP_COND, SD_CMD_SEND_IF_COND,
+    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR
 };
 
 pub mod sdmmc_capability;
 mod sdmmc_constant;
+mod sdcard;
+
 pub struct SdmmcCmd {
     pub cmdidx: u32,
     pub resp_type: u32,
@@ -468,7 +467,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             };
 
             // Send CMD55
-            SdmmcProtocol::<'a, T>::send_cmd_and_receive_resp(
+            Self::send_cmd_and_receive_resp(
                 self.hardware,
                 &cmd,
                 None,
@@ -482,17 +481,19 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             };
 
             // Set the HCS bit if version is SD Version 2
-            // since you have reached here, the card would be at least SD Version 2
+            // since the flow has reached here, the card would be at least SD Version 2
             cmd.cmdarg |= OCR_HCS;
 
             // TODO: Right now the operating voltage is hardcoded, could this have unintended behavior for legacy device
             // And maybe change this when we are trying to support UHS I
+            // Change this when we decide to support spi or SDSC as well
             cmd.cmdarg |= (MMC_VDD_33_34 | MMC_VDD_32_33) & 0xff8000;
 
             if self.cap.contains(sdmmc_capability::SdmmcHostCapability(
                 MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
             )) {
                 cmd.cmdarg |= OCR_S18R;
+                cmd.cmdarg |= MMC_VDD_165_195;
             }
 
             // Send ACMD41
@@ -514,6 +515,42 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             }
             timeout -= 1;
         }
+
+        // 4. Send CMD2 to get the CID register
+        cmd = SdmmcCmd {
+            cmdidx: MMC_CMD_ALL_SEND_CID,
+            resp_type: MMC_RSP_R2,
+            cmdarg: 0,
+        };
+        Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
+
+        // 5. Send CMD3 to set and receive the RCA
+        cmd = SdmmcCmd {
+            cmdidx: SD_CMD_SEND_RELATIVE_ADDR,
+            resp_type: MMC_RSP_R6,
+            cmdarg: 0,
+        };
+        Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
+
+        let rca = (resp[0] >> 16) as u16; // Store RCA from response
+
+        // 6. Send CMD9 to get the CSD register
+        cmd = SdmmcCmd {
+            cmdidx: MMC_CMD_SEND_CSD,
+            resp_type: MMC_RSP_R2,
+            cmdarg: (rca as u32) << 16,
+        };
+        Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
+
+        let raw_csd = resp[0];
+
+        // 7. Send CMD7 to select the card
+        cmd = SdmmcCmd {
+            cmdidx: MMC_CMD_SELECT_CARD,
+            resp_type: MMC_RSP_R1,
+            cmdarg: (rca as u32) << 16,
+        };
+        Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;        
 
         // Continue working on it next week
         Ok(())
