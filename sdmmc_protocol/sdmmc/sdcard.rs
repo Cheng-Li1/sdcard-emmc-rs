@@ -1,12 +1,31 @@
 use core::fmt::{self, Write};
 
-pub struct Sdcard {
-    manufacture_info: Cid, 
-    card_specific_data: Csd, 
+use super::mmc_struct::{self, MmcState};
 
+pub struct Sdcard {
+    pub card_id: u128,
+    pub manufacture_info: Cid, 
+    pub card_specific_data: Csd, 
+    pub card_version: SdVersion,
+    pub relative_card_addr: u16,
+    pub card_state: MmcState,
+    pub card_config: Option<Scr>,
 }
 
-struct Cid {
+// Beware this struct is meant to track the cmd set that the sdcard should support
+// For example, if the SdVersion is set to V3_0, it does not mean the card version is 3.0
+// But mean that the sdcard support cmd at least up to specification 3.0
+// The SD card specification is cumulative, meaning that if an SD card reports support for a 
+// particular version (say 4.0), it implicitly supports all earlier versions as well.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SdVersion {
+    V1_0 = 1,
+    V2_0 = 2,
+    V3_0 = 3,
+    V4_0 = 4,
+}
+
+pub struct Cid {
     manufacturer_id: u8,
     oem_id: u16,
     product_name: [u8; 5],
@@ -80,19 +99,84 @@ impl ToArray for Cid {
     }
 }
 
-struct Csd {
+// This struct is super unreliable, I am thinking 
+pub struct Csd {
     csd_structure: u8,
-    taac: u8,
-    nsac: u8,
-    tran_speed: u8,
-    card_capacity: u32,
+    card_capacity: u64,
     max_read_block_len: u16,
     max_write_block_len: u16,
-    erase_sector_size: u8,
+    erase_sector_size: u16,
     supports_partial_write: bool,
 }
 
-struct Scr {
+impl Csd {
+    pub fn new(csd: [u32; 4]) -> (Csd, SdVersion) {
+        // Combine the four 32-bit words into a single 128-bit value for easier bit manipulation
+        let csd_combined = ((csd[0] as u128) << 96)
+            | ((csd[1] as u128) << 64)
+            | ((csd[2] as u128) << 32)
+            | (csd[3] as u128);
+
+        // Extract the CSD structure version
+        let csd_structure = ((csd_combined >> 126) & 0x3) as u8; // Bits 126–127
+        let sd_version = match csd_structure {
+            0 => SdVersion::V1_0, // CSD Version 1.0
+            1 => SdVersion::V2_0, // CSD Version 2.0
+            _ => panic!("Unsupported CSD structure version"), // CSD structures beyond 2.0 are not supported here
+        };
+
+        // Parse fields based on CSD version
+        let (card_capacity, erase_sector_size) = match sd_version {
+            SdVersion::V1_0 => {
+                // CSD Version 1.0 capacity calculation
+                let c_size = ((csd_combined >> 62) & 0xFFF) as u64; // Bits 62–73
+                let c_size_mult = ((csd_combined >> 47) & 0x7) as u64; // Bits 47–49
+                let read_bl_len = ((csd_combined >> 80) & 0xF) as u64; // Bits 80–83
+                let card_capacity = (c_size + 1) * (1 << (c_size_mult + 2)) * (1 << read_bl_len);
+
+                // Erase sector size is calculated differently in CSD Version 1.0
+                let sector_size = ((csd_combined >> 39) & 0x7F) as u16 + 1; // Bits 39–45
+                (card_capacity, sector_size)
+            },
+            SdVersion::V2_0 => {
+                // CSD Version 2.0 capacity calculation for SDHC/SDXC
+                let c_size = ((csd_combined >> 48) & 0x3FFFF) as u64; // Bits 48–69
+                let card_capacity = (c_size + 1) * 512 * 1024; // Capacity formula for SDHC/SDXC
+
+                // Erase sector size calculation for CSD Version 2.0
+                let sector_size = ((csd_combined >> 39) & 0x7F + 1) as u16 * 512; // Bits 39–45
+                (card_capacity, sector_size)
+            },
+            SdVersion::V3_0 => unreachable!(),
+            SdVersion::V4_0 => unreachable!(),
+        };
+
+        // Block lengths (same for both versions)
+        let read_bl_len = ((csd_combined >> 80) & 0xF) as u16; // Bits 80–83
+        let max_read_block_len = 1 << read_bl_len;
+
+        let write_bl_len = ((csd_combined >> 22) & 0xF) as u16; // Bits 22–25
+        let max_write_block_len = 1 << write_bl_len;
+
+        // Partial write support (same for both versions)
+        let supports_partial_write = ((csd_combined >> 21) & 0x1) != 0; // Bit 21
+
+        // Return the constructed CSD struct along with the SD version
+        (
+            Csd {
+                csd_structure,
+                card_capacity,
+                max_read_block_len,
+                max_write_block_len,
+                erase_sector_size,
+                supports_partial_write,
+            },
+            sd_version,
+        )
+    }
+}
+
+pub struct Scr {
     sd_spec: u8,
     data_stat_after_erase: bool,
     sd_security: u8,

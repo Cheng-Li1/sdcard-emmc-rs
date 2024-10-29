@@ -4,12 +4,15 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
+use mmc_struct::{BlockDevice, MmcBusWidth, MmcState, MmcTiming};
+use sdcard::{Cid, Csd, Sdcard};
 use sdmmc_capability::{SdmmcHostCapability, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_UHS_SDR12};
 use sdmmc_constant::{
     INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR
 };
 
 pub mod sdmmc_capability;
+mod mmc_struct;
 mod sdmmc_constant;
 mod sdcard;
 
@@ -81,32 +84,6 @@ pub enum MmcPowerMode {
     Up = 1,
     On = 2,
     Undefined = 3,
-}
-
-// Enums for bus_width
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum MmcBusWidth {
-    Width1 = 0,
-    Width4 = 2,
-    Width8 = 3,
-}
-
-// Timing modes (could be an enum or use the bitflags constants defined earlier)
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum MmcTiming {
-    Legacy = 0,
-    MmcHs = 1,
-    SdHs = 2,
-    UhsSdr12 = 3,
-    UhsSdr25 = 4,
-    UhsSdr50 = 5,
-    UhsSdr104 = 6,
-    UhsDdr50 = 7,
-    MmcDdr52 = 8,
-    MmcHs200 = 9,
-    MmcHs400 = 10,
-    SdExp = 11,
-    SdExp12V = 12,
 }
 
 // Signal voltage
@@ -184,31 +161,6 @@ pub struct SpiSettings {
     /// - In **native SD/MMC mode**, communication happens via dedicated **command and data lines** without the need for chip select.
     /// - In most applications, **SPI mode** is less commonly used, especially in high-performance systems.
     pub chip_select: MmcChipSelect,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MmcState {
-    /// The timing specification that dictates how data is transferred between the host
-    /// and the card.
-    ///
-    /// - The timing mode defines the protocol and speed class for communication, such as
-    ///   legacy modes, high-speed modes, or ultra-high-speed modes.
-    /// - Examples include:
-    ///   - `Timing::Legacy`: Legacy slower transfer mode.
-    ///   - `Timing::SdHs`: SD high-speed mode.
-    ///   - `Timing::MmcHs200`: eMMC HS200 mode for high-speed data transfers.
-    timing: MmcTiming,
-
-    /// The width of the data bus used for communication between the host and the card.
-    ///
-    /// - This field specifies whether the bus operates in 1-bit, 4-bit, or 8-bit mode.
-    /// - Wider bus widths (4-bit, 8-bit) enable higher data transfer rates, but not all
-    ///   cards or host controllers support every bus width.
-    /// - Common values:
-    ///   - `BusWidth::Width1`: 1-bit data width (lowest speed, used during initialization).
-    ///   - `BusWidth::Width4`: 4-bit data width (common for SD cards).
-    ///   - `BusWidth::Width8`: 8-bit data width (mainly for eMMC).
-    bus_width: MmcBusWidth,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,10 +326,10 @@ pub struct SdmmcProtocol<'a, T: SdmmcHardware> {
     pub hardware: &'a mut T,
 
     mmc_ios: MmcIos,
+
     host_info: HostInfo,
 
     cap: SdmmcHostCapability,
-    card_state: Option<MmcState>,
 }
 
 impl<T> Unpin for SdmmcProtocol<'_, T> where T: Unpin + SdmmcHardware {}
@@ -396,12 +348,11 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             mmc_ios,
             host_info,
             cap: host_cap,
-            card_state: None,
         })
     }
 
     // Funtion that is not completed
-    pub fn setup_card(&mut self) -> Result<(), SdmmcHalError> {
+    pub fn setup_card(&mut self) -> Result<BlockDevice, SdmmcHalError> {
         {
             let mut irq: u32 = 0;
             let _ = self.hardware.sdmmc_enable_interrupt(&mut irq);
@@ -446,14 +397,15 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         // or the card is eMMC or legacy sdcard
         // For now, we only deal with the situation it is a sdcard
         if res.is_ok() && resp[0] == 0x1AA {
-            self.setup_sdhc_cont()
+            let card: Sdcard = self.setup_sdhc_cont()?;
+            Ok(BlockDevice::Sdcard(card))
         } else {
             // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
             Err(SdmmcHalError::EUNSUPPORTEDCARD)
         }
     }
 
-    fn setup_sdhc_cont(&mut self) -> Result<(), SdmmcHalError> {
+    fn setup_sdhc_cont(&mut self) -> Result<Sdcard, SdmmcHalError> {
         let mut cmd: SdmmcCmd;
         let mut resp: [u32; 4] = [0; 4];
         // Uboot define this value to be 1000...
@@ -524,15 +476,23 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         };
         Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
 
+        let cid = Cid::new(resp);
+
+        let card_id = ((resp[0] as u128) << 96)
+        | ((resp[1] as u128) << 64)
+        | ((resp[2] as u128) << 32)
+        | (resp[3] as u128);
+
         // 5. Send CMD3 to set and receive the RCA
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_RELATIVE_ADDR,
             resp_type: MMC_RSP_R6,
             cmdarg: 0,
         };
+
         Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
 
-        let rca = (resp[0] >> 16) as u16; // Store RCA from response
+        let rca: u16 = (resp[0] >> 16) as u16; // Store RCA from response
 
         // 6. Send CMD9 to get the CSD register
         cmd = SdmmcCmd {
@@ -542,7 +502,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         };
         Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
 
-        let raw_csd = resp[0];
+        let (csd, card_version) = Csd::new(resp);
 
         // 7. Send CMD7 to select the card
         cmd = SdmmcCmd {
@@ -550,10 +510,23 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             resp_type: MMC_RSP_R1,
             cmdarg: (rca as u32) << 16,
         };
-        Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;        
+        Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
+
+        let card_state: MmcState = MmcState {
+            timing: MmcTiming::Legacy,
+            bus_width: MmcBusWidth::Width1,
+        };
 
         // Continue working on it next week
-        Ok(())
+        Ok(Sdcard {
+            card_id,
+            manufacture_info: cid,
+            card_specific_data: csd,
+            card_version,
+            relative_card_addr: rca,
+            card_state,
+            card_config: None,
+        })
     }
 
     pub fn enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {
