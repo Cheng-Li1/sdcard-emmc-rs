@@ -1,6 +1,6 @@
 use core::ptr;
 
-use sdmmc_protocol::sdmmc::{InterruptType, MmcData, MmcDataFlag, SdmmcCmd, SdmmcHalError, SdmmcHardware};
+use sdmmc_protocol::sdmmc::{mmc_struct::MmcBusWidth, sdmmc_capability::{MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_TIMING_UHS_SDR104}, HostInfo, InterruptType, MmcData, MmcDataFlag, MmcIos, SdmmcCmd, SdmmcHalError, SdmmcHardware};
 use sel4_microkit::debug_println;
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
@@ -15,6 +15,8 @@ macro_rules! div_round_up {
 // Clock related constant
 const SD_EMMC_CLKSRC_24M: u32 = 24000000;       // 24 MHz
 const SD_EMMC_CLKSRC_DIV2: u32 = 1000000000;    // 1 GHz
+const MESON_MIN_FREQUENCY: u32 = div_round_up!(SD_EMMC_CLKSRC_24M, CLK_MAX_DIV);
+const MESON_MAX_FREQUENCY: u64 = 200000000; // 200 Mhz
 const CLK_MAX_DIV: u32 = 63;
 const CLK_SRC_24M: u32 = 0 << 6;
 const CLK_SRC_DIV2: u32 = 1 << 6;
@@ -25,6 +27,20 @@ const CLK_CO_PHASE_270: u32 = 3 << 8;
 const CLK_TX_PHASE_000: u32 = 0 << 10;
 const CLK_TX_PHASE_180: u32 = 2 << 10;
 const CLK_ALWAYS_ON: u32 = 1 << 24;
+
+pub const CFG_BUS_WIDTH_MASK: u32 = 0b11;
+pub const CFG_BUS_WIDTH_1: u32 = 0;
+pub const CFG_BUS_WIDTH_4: u32 = 1;
+pub const CFG_BUS_WIDTH_8: u32 = 2;
+pub const CFG_BL_LEN_MASK: u32 = 0b1111 << 4;
+pub const CFG_BL_LEN_SHIFT: u32 = 4;
+pub const CFG_BL_LEN_512: u32 = 0b1001 << 4;
+pub const CFG_RESP_TIMEOUT_MASK: u32 = 0b1111 << 8;
+pub const CFG_RESP_TIMEOUT_256: u32 = 0b1000 << 8;
+pub const CFG_RC_CC_MASK: u32 = 0b1111 << 12;
+pub const CFG_RC_CC_16: u32 = 0b0100 << 12;
+pub const CFG_SDCLK_ALWAYS_ON: u32 = 1 << 18;
+pub const CFG_AUTO_CLK: u32 = 1 << 23;
 
 // CMD_CFG constants
 const CMD_CFG_CMD_INDEX_SHIFT: u32 = 24;
@@ -38,6 +54,7 @@ const CMD_CFG_BLOCK_MODE: u32 = 1 << 9;
 const CMD_CFG_TIMEOUT_4S: u32 = 12 << 12;
 const CMD_CFG_OWNER: u32 = 1 << 31;
 const CMD_CFG_END_OF_CHAIN: u32 = 1 << 11;
+
 
 // MMC_RSP constants
 const MMC_RSP_PRESENT: u32 = 1 << 0;
@@ -77,13 +94,9 @@ const IRQ_ERR_MASK: u32 = IRQ_CRC_ERR | IRQ_TIMEOUTS;
 // Equivalent to (IRQ_CRC_ERR | IRQ_TIMEOUTS | IRQ_END_OF_CHAIN)
 const IRQ_EN_MASK: u32 = IRQ_CRC_ERR | IRQ_TIMEOUTS | IRQ_END_OF_CHAIN;
 
-// Configuration constants (assuming based on context)
-const CFG_BL_LEN_MASK: u32 = 0xF << 4; // Bits 4-7
-const CFG_BL_LEN_SHIFT: u32 = 4;
-
 const MESON_SDCARD_SECTOR_SIZE: u32 = 512;
 
-pub const MAX_BLOCK_PER_TRANSFER:u32 = 0xFF;
+pub const MAX_BLOCK_PER_TRANSFER:u32 = 0x1FF;
 
 const WRITE_ADDR_UPPER: u32 = 0xFFFE0000;
 
@@ -159,6 +172,10 @@ impl MesonSdmmcRegisters {
         unsafe { &mut *(SDIO_BASE as *mut MesonSdmmcRegisters) }
     }
 
+    fn meson_reset(&mut self) {
+        
+    }
+
     /// Configures the SDIO clock based on the requested clock frequency and SoC type.
     ///
     /// # Arguments
@@ -172,7 +189,7 @@ impl MesonSdmmcRegisters {
 
         // Valid clock freq range:
         // f_min = div_round_up!(SD_EMMC_CLKSRC_24M, CLK_MAX_DIV);
-	    // f_max = 100000000; /* 100 MHz */
+	    // f_max = 200000000; /* 200 MHz */
         let clk: u32; 
         let clk_src: u32;
         // 400 khz for init the card
@@ -202,14 +219,6 @@ impl MesonSdmmcRegisters {
         meson_mmc_clk |= clk_div;
 
         unsafe { ptr::write_volatile(&mut self.clock, meson_mmc_clk); }
-    }
-
-    // Incomplete placeholder function, need regulator system to configure voltage
-    pub fn meson_set_ios(&mut self) {
-        /*
-         * This function should be able to adjust the voltage, frequency and number of data lanes in use
-         *
-         */
     }
 
     // This function can be seen as a Rust version of meson_mmc_setup_cmd function in uboot
@@ -284,6 +293,69 @@ impl MesonSdmmcRegisters {
 }
 
 impl SdmmcHardware for MesonSdmmcRegisters {
+    fn sdmmc_init(
+        &mut self,
+    ) -> Result<(MmcIos, HostInfo, u128), SdmmcHalError> {
+        let cap: u128 = MMC_TIMING_LEGACY | MMC_TIMING_SD_HS | MMC_TIMING_UHS | MMC_CAP_4_BIT_DATA | MMC_CAP_CMD23;
+
+        
+
+        return Err(SdmmcHalError::ENOTIMPLEMENTED);
+    }
+
+    fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
+        if freq > MESON_MAX_FREQUENCY || freq < MESON_MIN_FREQUENCY as u64 {
+            return Err(SdmmcHalError::EINVAL);
+        }
+        // #define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
+        let mut meson_mmc_clk: u32 = 0;
+
+        // Valid clock freq range:
+        // f_min = div_round_up!(SD_EMMC_CLKSRC_24M, CLK_MAX_DIV);
+	    // f_max = 100000000; /* 100 MHz */
+        let clk: u32; 
+        let clk_src: u32;
+        // 400 khz for init the card
+        let clock_freq: u32 = freq as u32;
+        if clock_freq > 16000000 {
+            clk = SD_EMMC_CLKSRC_DIV2;
+            clk_src = CLK_SRC_DIV2;
+        } else {
+            clk = SD_EMMC_CLKSRC_24M;
+            clk_src = CLK_SRC_24M;
+        }
+
+        let clk_div = div_round_up!(clk, clock_freq);
+        /* 
+        * From uboot meson_gx_mmc.c
+        * SM1 SoCs doesn't work fine over 50MHz with CLK_CO_PHASE_180
+        * If CLK_CO_PHASE_270 is used, it's more stable than other.
+        * Other SoCs use CLK_CO_PHASE_180 by default.
+        * But Linux default to use CLK_CO_PHASE_180
+        */
+        meson_mmc_clk |= CLK_CO_PHASE_180;
+        meson_mmc_clk |= CLK_TX_PHASE_000;
+
+        meson_mmc_clk |= clk_src;
+        meson_mmc_clk |= clk_div;
+
+        unsafe { ptr::write_volatile(&mut self.clock, meson_mmc_clk); }
+
+        Ok((clk/clk_div) as u64)
+    }
+
+    fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcHalError> {
+        let mut meson_mmc_cfg: u32;
+        unsafe { meson_mmc_cfg = ptr::read_volatile(&self.cfg); }
+        match bus_width {
+            MmcBusWidth::Width1 => meson_mmc_cfg |= CFG_BUS_WIDTH_1,
+            MmcBusWidth::Width4 => meson_mmc_cfg |= CFG_BUS_WIDTH_4,
+            MmcBusWidth::Width8 => meson_mmc_cfg |= CFG_BUS_WIDTH_8,
+        }
+        unsafe { ptr::write_volatile(&mut self.cfg, meson_mmc_cfg); }
+        Ok(())
+    }
+
     fn sdmmc_send_command(&mut self, cmd: &SdmmcCmd, data: Option<&MmcData>) -> Result<(), SdmmcHalError> {
         // It seems that let Some(mmc_data) = data && mmc_data.blocksize != 512
         // is not stable on this nightly 2024.05.01 compiler

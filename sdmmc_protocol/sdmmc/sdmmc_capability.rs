@@ -42,11 +42,14 @@ pub const MMC_TIMING_SD_HS: u128 = 1 << 2;
 pub const MMC_TIMING_UHS_SDR12: u128 = 1 << 3;
 pub const MMC_TIMING_UHS_SDR25: u128 = 1 << 4;
 pub const MMC_TIMING_UHS_SDR50: u128 = 1 << 5;
-pub const MMC_TIMING_UHS_SDR104: u128 = 1 << 6;
-pub const MMC_TIMING_UHS_DDR50: u128 = 1 << 7;
+pub const MMC_TIMING_UHS_DDR50: u128 = 1 << 6;
+pub const MMC_TIMING_UHS_SDR104: u128 = 1 << 7;
 pub const MMC_TIMING_MMC_DDR52: u128 = 1 << 8;
 pub const MMC_TIMING_MMC_HS200: u128 = 1 << 9;
 pub const MMC_TIMING_MMC_HS400: u128 = 1 << 10;
+
+pub const MMC_TIMING_UHS: u128 = MMC_TIMING_UHS_SDR12 | MMC_TIMING_UHS_SDR25 | MMC_TIMING_UHS_SDR50 | MMC_TIMING_UHS_SDR104 | MMC_TIMING_UHS_DDR50;
+
 pub const MMC_TIMING_SD_EXP: u128 = 1 << 11;
 pub const MMC_TIMING_SD_EXP_1_2V: u128 = 1 << 12;
 

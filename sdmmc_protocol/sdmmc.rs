@@ -12,7 +12,7 @@ use sdmmc_constant::{
 };
 
 pub mod sdmmc_capability;
-mod mmc_struct;
+pub mod mmc_struct;
 mod sdmmc_constant;
 mod sdcard;
 
@@ -270,13 +270,8 @@ pub trait SdmmcHardware {
 
     fn sdmmc_init(
         &mut self,
-    ) -> (
-        Result<(), SdmmcHalError>,
-        Option<MmcIos>,
-        Option<HostInfo>,
-        Option<u128>,
-    ) {
-        return (Err(SdmmcHalError::ENOTIMPLEMENTED), None, None, None);
+    ) -> Result<(MmcIos, HostInfo, u128), SdmmcHalError> {
+        return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
     // Change the clock, return the value or do not change it at all
@@ -336,18 +331,13 @@ impl<T> Unpin for SdmmcProtocol<'_, T> where T: Unpin + SdmmcHardware {}
 
 impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
     pub fn new(hardware: &'a mut T) -> Result<Self, SdmmcHalError> {
-        let (res, ios, info, cap) = hardware.sdmmc_init();
-        res.unwrap_err();
-        let host_cap: SdmmcHostCapability =
-            SdmmcHostCapability(cap.ok_or(SdmmcHalError::ENOTIMPLEMENTED)?);
-        let mmc_ios: MmcIos = ios.ok_or(SdmmcHalError::ENOTIMPLEMENTED)?;
-        let host_info: HostInfo = info.ok_or(SdmmcHalError::ENOTIMPLEMENTED)?;
+        let (ios, info, cap) = hardware.sdmmc_init()?;
 
         Ok(SdmmcProtocol {
             hardware,
-            mmc_ios,
-            host_info,
-            cap: host_cap,
+            mmc_ios: ios,
+            host_info: info,
+            cap: SdmmcHostCapability(cap),
         })
     }
 

@@ -4,13 +4,13 @@ use super::sdcard::Sdcard;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MmcBusWidth {
     Width1 = 0,
-    Width4 = 2,
-    Width8 = 3,
+    Width4 = 1,
+    Width8 = 2,
 }
 
 // Timing modes (could be an enum or use the bitflags constants defined earlier)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum MmcTiming {
+pub(crate) enum MmcTiming {
     Legacy = 0,
     MmcHs = 1,
     SdHs = 2,
@@ -24,10 +24,32 @@ pub enum MmcTiming {
     MmcHs400 = 10,
     SdExp = 11,
     SdExp12V = 12,
+    CardSetup = 13, // Additional frequency for card setup
+}
+
+impl MmcTiming {
+    fn frequency(&self) -> u32 {
+        match self {
+            MmcTiming::Legacy => 25000000,
+            MmcTiming::MmcHs => 26000000,
+            MmcTiming::SdHs => 50000000,
+            MmcTiming::UhsSdr12 => 25000000,
+            MmcTiming::UhsSdr25 => 50000000,
+            MmcTiming::UhsSdr50 => 100000000,
+            MmcTiming::UhsSdr104 => 208000000,
+            MmcTiming::UhsDdr50 => 50000000,
+            MmcTiming::MmcDdr52 => 52000000,
+            MmcTiming::MmcHs200 => 200000000,
+            MmcTiming::MmcHs400 => 200000000,
+            MmcTiming::SdExp => 985000000,     // Example frequency, adjust as needed
+            MmcTiming::SdExp12V => 985000000,  // Example frequency, adjust as needed
+            MmcTiming::CardSetup => 400000,   // Typical low frequency for card initialization
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MmcState {
+pub(crate) struct MmcState {
     /// The timing specification that dictates how data is transferred between the host
     /// and the card.
     ///
