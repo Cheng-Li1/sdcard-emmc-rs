@@ -4,17 +4,21 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
-use mmc_struct::{BlockDevice, MmcBusWidth, MmcState, MmcTiming};
+use mmc_struct::{MmcBusWidth, MmcDevice, MmcState, MmcTiming};
 use sdcard::{Cid, Csd, Sdcard};
 use sdmmc_capability::{SdmmcHostCapability, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_UHS_SDR12};
 use sdmmc_constant::{
-    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR
+    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE,
+    MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD,
+    MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK,
+    MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R,
+    SD_CMD_APP_SEND_OP_COND, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR,
 };
 
-pub mod sdmmc_capability;
 pub mod mmc_struct;
-mod sdmmc_constant;
 mod sdcard;
+pub mod sdmmc_capability;
+mod sdmmc_constant;
 
 pub struct SdmmcCmd {
     pub cmdidx: u32,
@@ -48,15 +52,6 @@ pub enum SdmmcHalError {
     EUNDEFINED,
     // The block transfer succeed, but fail to stop the read/write process
     ESTOPCMD,
-}
-
-// Interrupt related define
-#[repr(u32)] // Ensures the enum variants are stored as 32-bit integers
-pub enum InterruptType {
-    Success = 0b0001, // 1st bit
-    Error = 0b0010,   // 2nd bit
-    SDIO = 0b0100,    // 3rd bit
-                      // You can add more flags as needed
 }
 
 // Define the MMC response flags
@@ -225,6 +220,8 @@ pub struct MmcIos {
     ///   - `SignalVoltage::Voltage120`: 1.2V signaling (mainly for newer eMMC devices).
     pub signal_voltage: MmcSignalVoltage,
 
+    pub enabled_irq: u32,
+
     /// The bus mode for communication between the host and the card.
     ///
     /// This field defines how the host drives the command lines when communicating with the SD/MMC card.
@@ -255,22 +252,20 @@ pub struct MmcIos {
 }
 
 pub struct HostInfo {
-    max_frequency: u64,
-    min_frequency: u64,
-    max_block_per_req: u32,
-    enabled_irq: u32,
+    pub max_frequency: u64,
+    pub min_frequency: u64,
+    pub max_block_per_req: u32,
+    pub irq_capability: u32,
 }
 
 /// Program async Rust can be very dangerous if you do not know what is happening understand the hood
 /// Power up and power off cannot be properly implemented if I do not have access to control gpio/ regulator and timer
 pub trait SdmmcHardware {
-    fn sdmmc_power_up(&mut self) -> Result<(), SdmmcHalError> {
+    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<MmcPowerMode, SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
-    fn sdmmc_init(
-        &mut self,
-    ) -> Result<(MmcIos, HostInfo, u128), SdmmcHalError> {
+    fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
@@ -310,10 +305,6 @@ pub trait SdmmcHardware {
     fn sdmmc_ack_interrupt(&mut self, irq_enabled: &u32) -> Result<(), SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
-
-    fn sdmmc_power_off(&mut self) -> Result<(), SdmmcHalError> {
-        return Err(SdmmcHalError::ENOTIMPLEMENTED);
-    }
 }
 
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
@@ -325,6 +316,9 @@ pub struct SdmmcProtocol<'a, T: SdmmcHardware> {
     host_info: HostInfo,
 
     cap: SdmmcHostCapability,
+
+    /// This mmc device is optional because there may not always be a card in the slot!
+    mmc_device: Option<MmcDevice>,
 }
 
 impl<T> Unpin for SdmmcProtocol<'_, T> where T: Unpin + SdmmcHardware {}
@@ -338,11 +332,12 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             mmc_ios: ios,
             host_info: info,
             cap: SdmmcHostCapability(cap),
+            mmc_device: None,
         })
     }
 
     // Funtion that is not completed
-    pub fn setup_card(&mut self) -> Result<BlockDevice, SdmmcHalError> {
+    pub fn setup_card(&mut self) -> Result<(), SdmmcHalError> {
         {
             let mut irq: u32 = 0;
             let _ = self.hardware.sdmmc_enable_interrupt(&mut irq);
@@ -350,7 +345,10 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
         // TODO: Different sdcard and eMMC support different voltages, figure those out
         if self.mmc_ios.vdd != 330 {
-            self.hardware.sdmmc_power_up()?;
+            self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
+            // TODO: Right now we know the power will always be up and this function should not be called
+            // But when we encounter scenerio that may actually call this function, we should wait for the time specified in ios
+            // Right now this whole power up related thing does not work
             self.mmc_ios.vdd = 330;
         }
 
@@ -387,15 +385,16 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         // or the card is eMMC or legacy sdcard
         // For now, we only deal with the situation it is a sdcard
         if res.is_ok() && resp[0] == 0x1AA {
-            let card: Sdcard = self.setup_sdhc_cont()?;
-            Ok(BlockDevice::Sdcard(card))
+            let card: Sdcard = self.setup_sdcard_cont()?;
+            self.mmc_device = Some(MmcDevice::Sdcard(card));
+            Ok(())
         } else {
             // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
             Err(SdmmcHalError::EUNSUPPORTEDCARD)
         }
     }
 
-    fn setup_sdhc_cont(&mut self) -> Result<Sdcard, SdmmcHalError> {
+    fn setup_sdcard_cont(&mut self) -> Result<Sdcard, SdmmcHalError> {
         let mut cmd: SdmmcCmd;
         let mut resp: [u32; 4] = [0; 4];
         // Uboot define this value to be 1000...
@@ -409,12 +408,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             };
 
             // Send CMD55
-            Self::send_cmd_and_receive_resp(
-                self.hardware,
-                &cmd,
-                None,
-                &mut resp,
-            )?;
+            Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
 
             cmd = SdmmcCmd {
                 cmdidx: SD_CMD_APP_SEND_OP_COND,
@@ -469,9 +463,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         let cid = Cid::new(resp);
 
         let card_id = ((resp[0] as u128) << 96)
-        | ((resp[1] as u128) << 64)
-        | ((resp[2] as u128) << 32)
-        | (resp[3] as u128);
+            | ((resp[1] as u128) << 64)
+            | ((resp[2] as u128) << 32)
+            | (resp[3] as u128);
 
         // 5. Send CMD3 to set and receive the RCA
         cmd = SdmmcCmd {
@@ -521,13 +515,12 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
     pub fn enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {
         let res = self.hardware.sdmmc_enable_interrupt(irq_to_enable);
-        self.host_info.enabled_irq = *irq_to_enable;
+        self.mmc_ios.enabled_irq = *irq_to_enable;
         res
     }
 
     pub fn ack_interrupt(&mut self) -> Result<(), SdmmcHalError> {
-        self.hardware
-            .sdmmc_ack_interrupt(&self.host_info.enabled_irq)
+        self.hardware.sdmmc_ack_interrupt(&self.mmc_ios.enabled_irq)
     }
 
     pub async fn read_block(
@@ -571,9 +564,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
             // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
             // for read/write requests?
-            let _ = self
-                .hardware
-                .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
+            let _ = self.hardware.sdmmc_ack_interrupt(&self.mmc_ios.enabled_irq);
 
             return (res, Some(self));
         } else {
@@ -587,9 +578,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
             // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
             // for read/write requests?
-            let _ = self
-                .hardware
-                .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
+            let _ = self.hardware.sdmmc_ack_interrupt(&self.mmc_ios.enabled_irq);
 
             if let Ok(()) = res {
                 // Uboot code for determine response type in this case
@@ -605,9 +594,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
                 // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
                 // for read/write requests?
-                let _ = self
-                    .hardware
-                    .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
+                let _ = self.hardware.sdmmc_ack_interrupt(&self.mmc_ios.enabled_irq);
 
                 return (res.map_err(|_| SdmmcHalError::ESTOPCMD), Some(self));
             } else {
@@ -649,9 +636,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
             // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
             // for read/write requests?
-            let _ = self
-                .hardware
-                .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
+            let _ = self.hardware.sdmmc_ack_interrupt(&self.mmc_ios.enabled_irq);
 
             return (res, Some(self));
         } else {
@@ -665,9 +650,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
             // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
             // for read/write requests?
-            let _ = self
-                .hardware
-                .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
+            let _ = self.hardware.sdmmc_ack_interrupt(&self.mmc_ios.enabled_irq);
 
             if let Ok(()) = res {
                 // Uboot code for determine response type in this case
@@ -683,9 +666,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
                 // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
                 // for read/write requests?
-                let _ = self
-                    .hardware
-                    .sdmmc_ack_interrupt(&self.host_info.enabled_irq);
+                let _ = self.hardware.sdmmc_ack_interrupt(&self.mmc_ios.enabled_irq);
 
                 return (res.map_err(|_| SdmmcHalError::ESTOPCMD), Some(self));
             } else {

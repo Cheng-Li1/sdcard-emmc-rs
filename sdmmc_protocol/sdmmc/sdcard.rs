@@ -4,18 +4,23 @@ use super::mmc_struct::{self, MmcState};
 
 pub struct Sdcard {
     pub card_id: u128,
-    pub manufacture_info: Cid, 
-    pub card_specific_data: Csd, 
+    pub manufacture_info: Cid,
+    pub card_specific_data: Csd,
     pub card_version: SdVersion,
     pub relative_card_addr: u16,
     pub card_state: MmcState,
     pub card_config: Option<Scr>,
 }
 
+/// Placeholder eMMC struct that is not implemented
+pub struct EMmc {
+    pub card_id: u128,
+}
+
 // Beware this struct is meant to track the cmd set that the sdcard should support
 // For example, if the SdVersion is set to V3_0, it does not mean the card version is 3.0
 // But mean that the sdcard support cmd at least up to specification 3.0
-// The SD card specification is cumulative, meaning that if an SD card reports support for a 
+// The SD card specification is cumulative, meaning that if an SD card reports support for a
 // particular version (say 4.0), it implicitly supports all earlier versions as well.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SdVersion {
@@ -81,7 +86,7 @@ impl ToArray for Cid {
     fn to_array(&self) -> [u8; 128] {
         let mut buf = [0u8; 128];
         let mut writer = ArrayWriter::new(&mut buf);
-        
+
         write!(
             writer,
             "Manufacturer ID: {}\nOEM ID: {}\nProduct Name: {}\nProduct Revision: {}\n\
@@ -93,13 +98,14 @@ impl ToArray for Cid {
             self.serial_number,
             self.manufacturing_date.0,
             self.manufacturing_date.1,
-        ).ok();
-        
+        )
+        .ok();
+
         buf
     }
 }
 
-// This struct is super unreliable, I am thinking 
+// This struct is super unreliable, I am thinking
 pub struct Csd {
     csd_structure: u8,
     card_capacity: u64,
@@ -120,8 +126,8 @@ impl Csd {
         // Extract the CSD structure version
         let csd_structure = ((csd_combined >> 126) & 0x3) as u8; // Bits 126–127
         let sd_version = match csd_structure {
-            0 => SdVersion::V1_0, // CSD Version 1.0
-            1 => SdVersion::V2_0, // CSD Version 2.0
+            0 => SdVersion::V1_0,                             // CSD Version 1.0
+            1 => SdVersion::V2_0,                             // CSD Version 2.0
             _ => panic!("Unsupported CSD structure version"), // CSD structures beyond 2.0 are not supported here
         };
 
@@ -137,7 +143,7 @@ impl Csd {
                 // Erase sector size is calculated differently in CSD Version 1.0
                 let sector_size = ((csd_combined >> 39) & 0x7F) as u16 + 1; // Bits 39–45
                 (card_capacity, sector_size)
-            },
+            }
             SdVersion::V2_0 => {
                 // CSD Version 2.0 capacity calculation for SDHC/SDXC
                 let c_size = ((csd_combined >> 48) & 0x3FFFF) as u64; // Bits 48–69
@@ -146,7 +152,7 @@ impl Csd {
                 // Erase sector size calculation for CSD Version 2.0
                 let sector_size = ((csd_combined >> 39) & 0x7F + 1) as u16 * 512; // Bits 39–45
                 (card_capacity, sector_size)
-            },
+            }
             SdVersion::V3_0 => unreachable!(),
             SdVersion::V4_0 => unreachable!(),
         };
@@ -193,7 +199,7 @@ struct ArrayWriter<'a> {
 
 impl<'a> ArrayWriter<'a> {
     fn new(buf: &'a mut [u8]) -> Self {
-        Self {buf, pos: 0}
+        Self { buf, pos: 0 }
     }
 }
 

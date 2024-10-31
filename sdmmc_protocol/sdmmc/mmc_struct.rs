@@ -1,4 +1,4 @@
-use super::sdcard::Sdcard;
+use super::sdcard::{EMmc, Sdcard};
 
 // Enums for bus_width
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -41,9 +41,9 @@ impl MmcTiming {
             MmcTiming::MmcDdr52 => 52000000,
             MmcTiming::MmcHs200 => 200000000,
             MmcTiming::MmcHs400 => 200000000,
-            MmcTiming::SdExp => 985000000,     // Example frequency, adjust as needed
-            MmcTiming::SdExp12V => 985000000,  // Example frequency, adjust as needed
-            MmcTiming::CardSetup => 400000,   // Typical low frequency for card initialization
+            MmcTiming::SdExp => 985000000, // Example frequency, adjust as needed
+            MmcTiming::SdExp12V => 985000000, // Example frequency, adjust as needed
+            MmcTiming::CardSetup => 400000, // Typical low frequency for card initialization
         }
     }
 }
@@ -73,9 +73,9 @@ pub(crate) struct MmcState {
     pub bus_width: MmcBusWidth,
 }
 
-pub enum BlockDevice {
-    None, 
+pub enum MmcDevice {
     Sdcard(Sdcard),
-    EMmc,
-    // TODO, when we decide to support emmc card, modify this struct
+    EMmc(EMmc),
+    Unknown,
+    // TODO, when we decide to support emmc/sdio, modify this struct
 }
