@@ -2,7 +2,7 @@ use core::fmt::{self, Write};
 
 use super::mmc_struct::{self, MmcState};
 
-pub struct Sdcard {
+pub(crate) struct Sdcard {
     pub card_id: u128,
     pub manufacture_info: Cid,
     pub card_specific_data: Csd,

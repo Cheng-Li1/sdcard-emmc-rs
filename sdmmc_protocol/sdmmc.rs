@@ -4,15 +4,20 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
+use bitflags::Flags;
 use mmc_struct::{MmcBusWidth, MmcDevice, MmcState, MmcTiming};
 use sdcard::{Cid, Csd, Sdcard};
-use sdmmc_capability::{SdmmcHostCapability, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_UHS_SDR12};
+use sdmmc_capability::{
+    SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_SD_HS,
+    MMC_TIMING_UHS_SDR12,
+};
 use sdmmc_constant::{
     INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE,
     MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD,
-    MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK,
-    MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R,
-    SD_CMD_APP_SEND_OP_COND, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR,
+    MMC_CMD_STOP_TRANSMISSION, MMC_CMD_SWITCH, MMC_CMD_WRITE_MULTIPLE_BLOCK,
+    MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS,
+    OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_SEND_IF_COND,
+    SD_CMD_SEND_RELATIVE_ADDR,
 };
 
 pub mod mmc_struct;
@@ -52,6 +57,7 @@ pub enum SdmmcHalError {
     EUNDEFINED,
     // The block transfer succeed, but fail to stop the read/write process
     ESTOPCMD,
+    ENOCARD,
 }
 
 // Define the MMC response flags
@@ -269,7 +275,8 @@ pub trait SdmmcHardware {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
-    // Change the clock, return the value or do not change it at all
+    /// Change the clock, return the value or do not change it at all
+    /// If the freq is set to zero, this function should try to stop the clock completely
     fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
@@ -340,7 +347,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
     pub fn setup_card(&mut self) -> Result<(), SdmmcHalError> {
         {
             let mut irq: u32 = 0;
-            let _ = self.hardware.sdmmc_enable_interrupt(&mut irq);
+            self.hardware.sdmmc_enable_interrupt(&mut irq)?;
+            self.mmc_ios.enabled_irq = irq;
         }
 
         // TODO: Different sdcard and eMMC support different voltages, figure those out
@@ -460,7 +468,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         };
         Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
 
-        let cid = Cid::new(resp);
+        let cid: Cid = Cid::new(resp);
 
         let card_id = ((resp[0] as u128) << 96)
             | ((resp[1] as u128) << 64)
@@ -496,6 +504,10 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         };
         Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
 
+        self.mmc_ios.clock = self
+            .hardware
+            .sdmmc_config_clock(MmcTiming::Legacy.frequency())?;
+
         let card_state: MmcState = MmcState {
             timing: MmcTiming::Legacy,
             bus_width: MmcBusWidth::Width1,
@@ -511,6 +523,91 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             card_state,
             card_config: None,
         })
+    }
+
+    /// Placeholder function for validating if the host satisfy the minimal operation condition
+    fn validate_host_capibaility(host_info: HostInfo, cap: SdmmcHostCapability) {
+        todo!()
+    }
+
+    /// A function that tune the card speed
+    /// This function does not do roll back so if this function return an error, reset up the card
+    /// Do NOT call this function again if your card is already tuned as this function is not that cheap!
+    /// But you should call this function the card being turned into power saving mode
+    pub fn tune_performance(&mut self) -> Result<(), SdmmcHalError> {
+        let mmc_device = self.mmc_device.as_mut().ok_or(SdmmcHalError::ENOCARD)?;
+
+        // Turn down the clock frequency
+        self.mmc_ios.clock = self.hardware.sdmmc_config_clock(INIT_CLOCK_RATE)?;
+
+        match mmc_device {
+            MmcDevice::Sdcard(sdcard) => {
+                sdcard.card_state.timing = MmcTiming::CardSetup;
+                self.tune_performance()
+            }
+            MmcDevice::EMmc(emmc) => Err(SdmmcHalError::ENOTIMPLEMENTED),
+            MmcDevice::Unknown => Err(SdmmcHalError::ENOTIMPLEMENTED),
+        }
+    }
+
+    fn tune_sdcard_performance(&mut self) -> Result<(), SdmmcHalError> {
+        let mut resp: [u32; 4] = [0; 4];
+
+        if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
+            // TODO: Try to get and parse SCR register instead of assume every card support 4 bit datalanes
+            if self.mmc_ios.bus_width == MmcBusWidth::Width1
+                && self.cap.contains(SdmmcHostCapability(MMC_CAP_4_BIT_DATA))
+            {
+                // CMD55 + ACMD6 to set the card to 4-bit mode (if supported by host and card)
+                let cmd = SdmmcCmd {
+                    cmdidx: MMC_CMD_APP_CMD,
+                    resp_type: MMC_RSP_R1,
+                    cmdarg: (sdcard.relative_card_addr as u32) << 16,
+                };
+                Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
+
+                let cmd = SdmmcCmd {
+                    cmdidx: SD_CMD_APP_SET_BUS_WIDTH,
+                    resp_type: MMC_RSP_R1,
+                    cmdarg: 2, // Argument for 4-bit mode (0 for 1-bit mode)
+                };
+                Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
+
+                self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width4)?;
+
+                // If any of the cmd above fail, the card should be completely reinit
+                self.mmc_ios.bus_width = MmcBusWidth::Width4;
+            }
+
+            if self.cap.contains(SdmmcHostCapability(MMC_TIMING_SD_HS)) {
+                let cmd = SdmmcCmd {
+                    cmdidx: MMC_CMD_SWITCH,
+                    resp_type: MMC_RSP_R1,
+                    cmdarg: 0x80FFFF01,
+                };
+                Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
+                if (resp[0] & 0x80) == 0 {
+                    // Bit 7 set - function switch error
+                    // If that bit is not set, continue
+                    self.mmc_ios.clock = self
+                        .hardware
+                        .sdmmc_config_clock(MmcTiming::SdHs.frequency())?;
+                    sdcard.card_state.timing = MmcTiming::SdHs;
+                }
+                return Ok(());
+            }
+
+            // TODO: Add support for UHS I here
+
+            // Set the card speed back to legacy
+            self.mmc_ios.clock = self
+                .hardware
+                .sdmmc_config_clock(MmcTiming::Legacy.frequency())?;
+            sdcard.card_state.timing = MmcTiming::Legacy;
+            Ok(())
+        } else {
+            return Err(SdmmcHalError::EUNDEFINED);
+        }
     }
 
     pub fn enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {

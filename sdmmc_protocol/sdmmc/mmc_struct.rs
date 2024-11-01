@@ -4,8 +4,9 @@ use super::sdcard::{EMmc, Sdcard};
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MmcBusWidth {
     Width1 = 0,
-    Width4 = 1,
-    Width8 = 2,
+    // One is skipped because for SD_ACMD_SET_BUS_WIDTH, setting cmdargs to 2 indicate 4 datalanes
+    Width4 = 2,
+    Width8 = 3,
 }
 
 // Timing modes (could be an enum or use the bitflags constants defined earlier)
@@ -28,7 +29,7 @@ pub(crate) enum MmcTiming {
 }
 
 impl MmcTiming {
-    fn frequency(&self) -> u32 {
+    pub fn frequency(&self) -> u64 {
         match self {
             MmcTiming::Legacy => 25000000,
             MmcTiming::MmcHs => 26000000,
@@ -59,7 +60,7 @@ pub(crate) struct MmcState {
     ///   - `Timing::Legacy`: Legacy slower transfer mode.
     ///   - `Timing::SdHs`: SD high-speed mode.
     ///   - `Timing::MmcHs200`: eMMC HS200 mode for high-speed data transfers.
-    pub timing: MmcTiming,
+    pub(crate) timing: MmcTiming,
 
     /// The width of the data bus used for communication between the host and the card.
     ///
@@ -70,10 +71,10 @@ pub(crate) struct MmcState {
     ///   - `BusWidth::Width1`: 1-bit data width (lowest speed, used during initialization).
     ///   - `BusWidth::Width4`: 4-bit data width (common for SD cards).
     ///   - `BusWidth::Width8`: 8-bit data width (mainly for eMMC).
-    pub bus_width: MmcBusWidth,
+    pub(crate) bus_width: MmcBusWidth,
 }
 
-pub enum MmcDevice {
+pub(crate) enum MmcDevice {
     Sdcard(Sdcard),
     EMmc(EMmc),
     Unknown,
