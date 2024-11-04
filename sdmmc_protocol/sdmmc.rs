@@ -45,6 +45,7 @@ pub enum MmcDataFlag {
     SdmmcDataWrite,
 }
 
+#[derive(Debug)]
 pub enum SdmmcHalError {
     // Error for result not ready yet
     EBUSY,

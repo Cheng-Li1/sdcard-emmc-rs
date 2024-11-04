@@ -9,7 +9,27 @@ use sdmmc_protocol::sdmmc::{
     HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
     SdmmcHalError, SdmmcHardware,
 };
-use sel4_microkit::debug_println;
+
+// `sel4-microkit` specific implementation
+#[cfg(feature = "sel4-microkit")]
+#[macro_use]
+mod os_layer {
+    macro_rules! debug_log {
+        ($($arg:tt)*) => {
+            sel4_microkit::debug_println!($($arg)*);
+        };
+    }
+}
+
+/// Bare metal
+#[cfg(not(feature = "sel4-microkit"))]
+#[macro_use]
+mod os_layer {
+    // No operation, would be optimized out
+    macro_rules! debug_log {
+        ($($arg:tt)*) => {};
+    }
+}
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
 
@@ -404,7 +424,7 @@ impl SdmmcHardware for MesonSdmmcRegisters {
                 || mmc_data.blockcnt == 0
                 || mmc_data.blockcnt > MAX_BLOCK_PER_TRANSFER
             {
-                debug_println!("SDMMC: INVALID INPUT VARIABLE!");
+                debug_log!("SDMMC: INVALID INPUT VARIABLE!");
                 return Err(SdmmcHalError::EINVAL);
             }
             // Depend on the flag and hardware, the cache should be flushed accordingly
@@ -456,14 +476,14 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         }
 
         if (status & STATUS_RESP_TIMEOUT) != 0 {
-            debug_println!("SDMMC: CARD TIMEOUT!");
+            debug_log!("SDMMC: CARD TIMEOUT!");
             return Err(SdmmcHalError::ETIMEDOUT);
         }
 
         let mut return_val: Result<(), SdmmcHalError> = Ok(());
 
         if (status & STATUS_ERR_MASK) != 0 {
-            debug_println!("SDMMC: CARD IO ERROR!");
+            debug_log!("SDMMC: CARD IO ERROR!");
             return_val = Err(SdmmcHalError::EIO);
         }
 

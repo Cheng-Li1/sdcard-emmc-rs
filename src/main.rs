@@ -18,7 +18,10 @@ use sddf_blk::{
 };
 use sdmmc_hal::meson_gx_mmc::MesonSdmmcRegisters;
 
-use sdmmc_protocol::sdmmc::{InterruptType, SdmmcHalError, SdmmcHardware, SdmmcProtocol};
+use sdmmc_protocol::sdmmc::{
+    sdmmc_capability::{MMC_INTERRUPT_END_OF_CHAIN, MMC_INTERRUPT_ERROR},
+    SdmmcHalError, SdmmcHardware, SdmmcProtocol,
+};
 use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
 const BLK_VIRTUALIZER: sel4_microkit::Channel = sel4_microkit::Channel::new(0);
@@ -69,13 +72,17 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
         blk_queue_init_helper();
     }
     let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
-    let mut protocol: SdmmcProtocol<'static, MesonSdmmcRegisters> = SdmmcProtocol::new(meson_hal);
-    let mut irq_to_enable = InterruptType::Success as u32 | InterruptType::Error as u32;
+    let res = SdmmcProtocol::new(meson_hal);
+    let mut sdmmc_host = match res {
+        Ok(host) => host,
+        Err(err) => panic!("SDMMC: Error at init {:?}", err),
+    };
+    let mut irq_to_enable = MMC_INTERRUPT_ERROR | MMC_INTERRUPT_END_OF_CHAIN;
     // Should always succeed, at least for odroid C4
-    let _ = protocol.enable_interrupt(&mut irq_to_enable);
+    let _ = sdmmc_host.enable_interrupt(&mut irq_to_enable);
     HandlerImpl {
         future: None,
-        sdmmc: Some(protocol),
+        sdmmc: Some(sdmmc_host),
         request: None,
         retry: RETRY_CHANCE,
     }
