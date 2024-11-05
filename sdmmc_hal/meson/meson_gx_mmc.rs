@@ -497,7 +497,18 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         return_val
     }
 
+    /// This function is meant to clear, acknowledge and then reenable the interrupt
     fn sdmmc_enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {
+        // Disable interrupt
+        unsafe {
+            ptr::write_volatile(&mut self.irq_en, 0);
+        }
+
+        // Acknowledge interrupt
+        unsafe {
+            ptr::write_volatile(&mut self.status, IRQ_EN_MASK | IRQ_SDIO);
+        }
+
         let mut irq_bits_to_set: u32 = 0;
         if *irq_to_enable & MMC_INTERRUPT_END_OF_CHAIN > 0 {
             irq_bits_to_set |= IRQ_END_OF_CHAIN;

@@ -112,7 +112,7 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
     type Error = Infallible;
 
     fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {
-        // debug_println!("SDMMC_DRIVER: MESSAGE FROM CHANNEL: {}", channel.index());
+        debug_println!("SDMMC_DRIVER: MESSAGE FROM CHANNEL: {}", channel.index());
 
         if channel.index() != INTERRUPT.index() && channel.index() != BLK_VIRTUALIZER.index() {
             debug_println!(
@@ -120,13 +120,6 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                 channel.index()
             );
             return Ok(());
-        }
-
-        if channel.index() == INTERRUPT.index() {
-            let err = channel.irq_ack();
-            if err.is_err() {
-                panic!("SDMMC: Cannot acknowledge interrupt for CPU!")
-            }
         }
 
         let mut notify_virt: bool = false;
@@ -209,10 +202,10 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                 request.count = request.count * SDDF_TO_REAL_SECTOR as u16;
                 // Print the retrieved values
                 /*
-                debug_println!("io_or_offset: 0x{:x}", io_or_offset);// Simple u64
-                debug_println!("block_number: {}", block_number);    // Simple u32
-                debug_println!("count: {}", count);                  // Simple u16
-                debug_println!("id: {}", id);                        // Simple u32
+                debug_println!("io_or_offset: 0x{:x}", request.io_or_offset);// Simple u64
+                debug_println!("block_number: {}", request.block_number);    // Simple u32
+                debug_println!("count: {}", request.count);                  // Simple u16
+                debug_println!("id: {}", request.id);                        // Simple u32
                 */
                 match request.request_code {
                     BlkOp::BlkReqRead => {
@@ -284,6 +277,15 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                 break;
             }
         }
+
+        // Ack irq
+        if channel.index() == INTERRUPT.index() {
+            let err = channel.irq_ack();
+            if err.is_err() {
+                panic!("SDMMC: Cannot acknowledge interrupt for CPU!")
+            }
+        }
+        
         if notify_virt == true {
             // debug_println!("SDMMC_DRIVER: Notify the BLK_VIRTUALIZER!");
             BLK_VIRTUALIZER.notify();
