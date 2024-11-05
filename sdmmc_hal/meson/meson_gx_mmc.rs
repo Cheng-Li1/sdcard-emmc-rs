@@ -351,6 +351,11 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         return Ok((ios, info, cap));
     }
 
+    #[inline]
+    fn sdmmc_log(&self, str: &str) {
+        debug_log!("{}", str);
+    }
+
     fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
         if freq > MESON_MAX_FREQUENCY || freq < MESON_MIN_FREQUENCY as u64 {
             return Err(SdmmcHalError::EINVAL);

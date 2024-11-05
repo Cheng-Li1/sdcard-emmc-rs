@@ -4,6 +4,8 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
+use core::fmt::Write; // For write! macro with a buffer
+
 use bitflags::Flags;
 use mmc_struct::{MmcBusWidth, MmcDevice, MmcState, MmcTiming};
 use sdcard::{Cid, Csd, Sdcard};
@@ -276,6 +278,9 @@ pub trait SdmmcHardware {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
+    /// Debugger provided by the hardware layer
+    fn sdmmc_log(&self, str: &str) {}
+
     /// Change the clock, return the value or do not change it at all
     /// If the freq is set to zero, this function should try to stop the clock completely
     fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
@@ -365,11 +370,14 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
         self.mmc_ios.clock = clock;
 
+        // This line of code may not be needed?
         self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width1)?;
 
         self.mmc_ios.bus_width = MmcBusWidth::Width1;
 
         let mut resp: [u32; 4] = [0; 4];
+
+        self.hardware.sdmmc_log("I am gonna send go idle cmd!");
 
         let mut cmd = SdmmcCmd {
             cmdidx: MMC_CMD_GO_IDLE_STATE,
@@ -379,6 +387,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
         // This command does not expect a response
         self.hardware.sdmmc_send_command(&cmd, None)?;
+
+        self.hardware.sdmmc_log("I am gonna send SD_CMD_SEND_IF_COND!");
 
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
@@ -404,11 +414,14 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
     }
 
     fn setup_sdcard_cont(&mut self) -> Result<Sdcard, SdmmcHalError> {
+        self.hardware.sdmmc_log("Confirm the voltage is right!");
+
         let mut cmd: SdmmcCmd;
         let mut resp: [u32; 4] = [0; 4];
         // Uboot define this value to be 1000...
         let mut timeout: u16 = 1000;
         loop {
+            self.hardware.sdmmc_log("Inside SD_CMD_APP_SEND_OP_COND Loop");
             // Prepare CMD55 (APP_CMD)
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_APP_CMD,
@@ -476,6 +489,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             | ((resp[2] as u128) << 32)
             | (resp[3] as u128);
 
+        // TODO: Figure out a better way to do this then adding microkit crate
+        sel4_microkit::debug_println!("CID: {:08x} {:08x} {:08x} {:08x}", resp[0], resp[1], resp[2], resp[3]);
+
         // 5. Send CMD3 to set and receive the RCA
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_RELATIVE_ADDR,
@@ -487,6 +503,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
         let rca: u16 = (resp[0] >> 16) as u16; // Store RCA from response
 
+        sel4_microkit::debug_println!("RCA: {:04x}", rca);
+
         // 6. Send CMD9 to get the CSD register
         cmd = SdmmcCmd {
             cmdidx: MMC_CMD_SEND_CSD,
@@ -494,6 +512,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             cmdarg: (rca as u32) << 16,
         };
         Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
+
+        sel4_microkit::debug_println!("CSD: {:08x} {:08x} {:08x} {:08x}", resp[0], resp[1], resp[2], resp[3]);
 
         let (csd, card_version) = Csd::new(resp);
 
@@ -513,6 +533,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             timing: MmcTiming::Legacy,
             bus_width: MmcBusWidth::Width1,
         };
+
+        self.hardware.sdmmc_log("Card init complete!");
 
         // Continue working on it next week
         Ok(Sdcard {

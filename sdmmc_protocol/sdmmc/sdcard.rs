@@ -111,7 +111,7 @@ pub struct Csd {
     card_capacity: u64,
     max_read_block_len: u16,
     max_write_block_len: u16,
-    erase_sector_size: u16,
+    erase_sector_size: u32,
     supports_partial_write: bool,
 }
 
@@ -141,7 +141,7 @@ impl Csd {
                 let card_capacity = (c_size + 1) * (1 << (c_size_mult + 2)) * (1 << read_bl_len);
 
                 // Erase sector size is calculated differently in CSD Version 1.0
-                let sector_size = ((csd_combined >> 39) & 0x7F) as u16 + 1; // Bits 39–45
+                let sector_size = ((csd_combined >> 39) & 0x7F) as u32 + 1; // Bits 39–45
                 (card_capacity, sector_size)
             }
             SdVersion::V2_0 => {
@@ -150,7 +150,8 @@ impl Csd {
                 let card_capacity = (c_size + 1) * 512 * 1024; // Capacity formula for SDHC/SDXC
 
                 // Erase sector size calculation for CSD Version 2.0
-                let sector_size = ((csd_combined >> 39) & 0x7F + 1) as u16 * 512; // Bits 39–45
+                let sector_size = ((csd_combined >> 39) & 0x7F + 1) as u32 * 512; // Bits 39–45
+
                 (card_capacity, sector_size)
             }
             SdVersion::V3_0 => unreachable!(),

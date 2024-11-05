@@ -10,3 +10,4 @@ path = "lib.rs"
 
 [dependencies]
 bitflags = "2.6.0"
+sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "d3790bfd15512e18659f9491c319867fabf9552d"}

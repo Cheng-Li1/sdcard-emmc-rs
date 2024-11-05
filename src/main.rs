@@ -67,16 +67,23 @@ fn create_dummy_waker() -> Waker {
 
 #[protection_domain(heap_size = 0x10000)]
 fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
-    // debug_println!("Driver init!");
+    debug_println!("Driver init!");
     unsafe {
         blk_queue_init_helper();
     }
     let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
-    let res = SdmmcProtocol::new(meson_hal);
+    let mut res = SdmmcProtocol::new(meson_hal);
     let mut sdmmc_host = match res {
         Ok(host) => host,
         Err(err) => panic!("SDMMC: Error at init {:?}", err),
     };
+    let res2 = sdmmc_host.setup_card();
+    if let Err(error) = res2 {
+        panic!("SDMMC: Error at setup {:?}", error);
+    }
+    else {
+        debug_println!("Card setup succeed!");
+    }
     let mut irq_to_enable = MMC_INTERRUPT_ERROR | MMC_INTERRUPT_END_OF_CHAIN;
     // Should always succeed, at least for odroid C4
     let _ = sdmmc_host.enable_interrupt(&mut irq_to_enable);
