@@ -72,19 +72,32 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
         blk_queue_init_helper();
     }
     let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
-    let mut res = SdmmcProtocol::new(meson_hal);
+
+    let unsafe_stolen_memory: u32;
+
+    // This line of code actually is very unsafe!
+    // Consider
+    unsafe_stolen_memory = (meson_hal as *const _ as usize + 0x800) as u32;
+    assert!(unsafe_stolen_memory % 4 == 0);
+
+    // Handling result in two different ways, by matching and unwrap_or_else
+    let res = SdmmcProtocol::new(meson_hal);
     let mut sdmmc_host = match res {
         Ok(host) => host,
         Err(err) => panic!("SDMMC: Error at init {:?}", err),
     };
-    let res2 = sdmmc_host.setup_card();
-    if let Err(error) = res2 {
-        panic!("SDMMC: Error at setup {:?}", error);
-    }
-    else {
-        debug_println!("Card setup succeed!");
-    }
+
+    sdmmc_host
+        .setup_card()
+        .unwrap_or_else(|error| panic!("SDMMC: Error at setup {:?}", error));
+
+    // TODO: Should tuning be possible to fail?
+    sdmmc_host
+        .tune_performance(Some(unsafe_stolen_memory))
+        .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
+
     let mut irq_to_enable = MMC_INTERRUPT_ERROR | MMC_INTERRUPT_END_OF_CHAIN;
+
     // Should always succeed, at least for odroid C4
     let _ = sdmmc_host.enable_interrupt(&mut irq_to_enable);
     HandlerImpl {
@@ -277,18 +290,16 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                 break;
             }
         }
-
+        if notify_virt == true {
+            // debug_println!("SDMMC_DRIVER: Notify the BLK_VIRTUALIZER!");
+            BLK_VIRTUALIZER.notify();
+        }
         // Ack irq
         if channel.index() == INTERRUPT.index() {
             let err = channel.irq_ack();
             if err.is_err() {
                 panic!("SDMMC: Cannot acknowledge interrupt for CPU!")
             }
-        }
-        
-        if notify_virt == true {
-            // debug_println!("SDMMC_DRIVER: Notify the BLK_VIRTUALIZER!");
-            BLK_VIRTUALIZER.notify();
         }
         Ok(())
     }

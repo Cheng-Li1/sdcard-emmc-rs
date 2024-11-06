@@ -219,3 +219,57 @@ impl<'a> Write for ArrayWriter<'a> {
         Ok(())
     }
 }
+
+/*
+/// Parses the R1 response from an SD card command.
+/// The function takes a 32-bit unsigned integer representing the R1 response
+/// and returns a structured report of the status.
+///
+/// # Arguments
+/// * `response` - The 32-bit R1 response from the SD card command.
+///
+/// # Returns
+/// A result with either Ok (no errors) or an error string describing the problem.
+fn parse_r1_response(response: u32) -> Result<String, String> {
+    // Check each status bit and gather relevant info.
+    let out_of_range = (response >> 31) & 1 != 0;
+    let address_error = (response >> 30) & 1 != 0;
+    let block_len_error = (response >> 29) & 1 != 0;
+    let erase_seq_error = (response >> 28) & 1 != 0;
+    let ready_for_data = (response >> 8) & 1 != 0;
+    let idle_state = (response >> 0) & 1 != 0;
+
+    // Extract card state (bits 9-12).
+    let card_state = (response >> 9) & 0xF;
+
+    // Collect error messages for any issues found.
+    let mut errors = Vec::new();
+    if out_of_range { errors.push("Out of range error"); }
+    if address_error { errors.push("Address error"); }
+    if block_len_error { errors.push("Block length error"); }
+    if erase_seq_error { errors.push("Erase sequence error"); }
+
+    // Parse and interpret card state
+    let state_description = match card_state {
+        0 => "Idle",
+        1 => "Ready",
+        2 => "Identification",
+        3 => "Standby",
+        4 => "Transfer",
+        5 => "Sending Data",
+        6 => "Receive Data",
+        7 => "Programming",
+        8 => "Disconnect",
+        _ => "Unknown",
+    };
+
+    // Report ready status or errors.
+    if !errors.is_empty() {
+        Err(format!("R1 response contains errors: {}", errors.join(", ")))
+    } else if !ready_for_data {
+        Err("Card is not ready for data.".to_string())
+    } else {
+        Ok(format!("R1 response is valid. Card state: {}", state_description))
+    }
+}
+*/

@@ -295,6 +295,32 @@ pub trait SdmmcHardware {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
+    /// Sends a command to the SD/MMC card, ensuring that busy signal handling is managed appropriately.
+    ///
+    /// ### Busy Signal Handling
+    /// The hardware layer is responsible for delaying the actual sending of the command if the card is busy.
+    /// For example, when the protocol layer sends a command expecting an R1B response (which indicates a busy state),
+    /// and immediately sends another command afterward, the hardware layer must ensure that the new command is sent
+    /// only after the busy signal from the card has cleared.
+    ///
+    /// ### Hardware Busy Signal Detection
+    /// Many modern host controllers support automatic busy signal detection, in which case the hardware layer
+    /// does not need to implement any additional checks or delays—the controller will wait internally until
+    /// the busy state is cleared before completing the command.
+    ///
+    /// ### Manual Busy Waiting
+    /// If the host controller does not support hardware busy signal detection, the hardware layer must
+    /// implement this behavior manually by monitoring the card's busy state and delaying the next command
+    /// until the card is ready. This approach aligns with Linux’s handling of busy signals in its MMC/SD subsystem.
+    ///
+    /// ### Parameters
+    /// * `cmd` - The SD/MMC command to send.
+    /// * `data` - Optional data associated with the command, if applicable.
+    ///
+    /// ### Returns
+    /// * `Ok(())` on success.
+    /// * `Err(SdmmcHalError::ENOTIMPLEMENTED)` if the function is not implemented.
+    ///
     fn sdmmc_send_command(
         &mut self,
         cmd: &SdmmcCmd,
@@ -388,7 +414,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         // This command does not expect a response
         self.hardware.sdmmc_send_command(&cmd, None)?;
 
-        self.hardware.sdmmc_log("I am gonna send SD_CMD_SEND_IF_COND!");
+        self.hardware
+            .sdmmc_log("I am gonna send SD_CMD_SEND_IF_COND!");
 
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
@@ -421,7 +448,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         // Uboot define this value to be 1000...
         let mut timeout: u16 = 1000;
         loop {
-            self.hardware.sdmmc_log("Inside SD_CMD_APP_SEND_OP_COND Loop");
+            self.hardware
+                .sdmmc_log("Inside SD_CMD_APP_SEND_OP_COND Loop");
             // Prepare CMD55 (APP_CMD)
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_APP_CMD,
@@ -490,7 +518,13 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             | (resp[3] as u128);
 
         // TODO: Figure out a better way to do this then adding microkit crate
-        sel4_microkit::debug_println!("CID: {:08x} {:08x} {:08x} {:08x}", resp[0], resp[1], resp[2], resp[3]);
+        sel4_microkit::debug_println!(
+            "CID: {:08x} {:08x} {:08x} {:08x}",
+            resp[0],
+            resp[1],
+            resp[2],
+            resp[3]
+        );
 
         // 5. Send CMD3 to set and receive the RCA
         cmd = SdmmcCmd {
@@ -513,7 +547,13 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         };
         Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
 
-        sel4_microkit::debug_println!("CSD: {:08x} {:08x} {:08x} {:08x}", resp[0], resp[1], resp[2], resp[3]);
+        sel4_microkit::debug_println!(
+            "CSD: {:08x} {:08x} {:08x} {:08x}",
+            resp[0],
+            resp[1],
+            resp[2],
+            resp[3]
+        );
 
         let (csd, card_version) = Csd::new(resp);
 
@@ -557,7 +597,48 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
     /// This function does not do roll back so if this function return an error, reset up the card
     /// Do NOT call this function again if your card is already tuned as this function is not that cheap!
     /// But you should call this function the card being turned into power saving mode
-    pub fn tune_performance(&mut self) -> Result<(), SdmmcHalError> {
+    /// `stolen_memory` is a specific memory region used to read data from the SD card through CMD6.
+    ///
+    /// ### Important Considerations:
+    ///
+    /// 1. **Memory Region Constraints**:
+    ///    - `stolen_memory` is used as a buffer to hold the 64-byte response from the SD card
+    ///      when executing CMD6. This response contains the function switch status and other
+    ///      function-related information.
+    ///    - The memory region from `stolen_memory` to `stolen_memory + 64 bytes` must not overlap
+    ///      with any other data structures, device registers, or memory-mapped peripherals to
+    ///      avoid conflicts or unintended behavior.
+    ///
+    /// 2. **Cache Considerations**:
+    ///    - If the system uses caching, you may need to ensure that cache effects do not interfere
+    ///      with the integrity of the data read from the SD card.
+    ///    - If caching is enabled, consider using cache invalidation before reading and cache flushing
+    ///      after writing data to ensure consistency between the memory and the SD card.
+    ///      For example, you might need to use cache control instructions or APIs specific to your
+    ///      platform to manage this.
+    ///
+    /// 3. **Alignment and Access Requirements**:
+    ///    - `stolen_memory` should be aligned to at least 4 bytes (or preferably 8 bytes) to avoid
+    ///      misaligned memory access issues, which could lead to performance penalties or even faults
+    ///      on some architectures.
+    /// Tunes SD card performance by adjusting data bus width and speed mode.
+    ///
+    /// # Parameters
+    /// - `addr_and_invalidate_cache_fn`: An optional tuple containing:
+    ///     - `*mut [u8; 64]`: A memory address used as a buffer for certain commands (e.g., CMD6). The memory
+    ///       should be suitable for DMA into(e.g. aligned to 8 bytes memory border and not conflict
+    ///       with other structure or device registers).
+    ///     - `fn()`: A function pointer that, when called, invalidates the cache for the range
+    ///       `addr` to `addr + 64 bytes`. This function should ensure cache consistency for
+    ///       that specific memory range. If `None`, no buffer is used, and the tune performance function
+    ///       will not attempt to change the card speed class.
+    ///
+    /// # Returns
+    /// - `Result<(), SdmmcHalError>`: `Ok(())` if tuning was successful, or an error otherwise.
+    pub fn tune_performance(
+        &mut self,
+        memory_and_invalidate_cache_fn: Option<(*mut [u8; 64], fn())>,
+    ) -> Result<(), SdmmcHalError> {
         let mmc_device = self.mmc_device.as_mut().ok_or(SdmmcHalError::ENOCARD)?;
 
         // Turn down the clock frequency
@@ -566,14 +647,17 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         match mmc_device {
             MmcDevice::Sdcard(sdcard) => {
                 sdcard.card_state.timing = MmcTiming::CardSetup;
-                self.tune_performance()
+                self.tune_sdcard_performance(memory_and_invalidate_cache_fn)
             }
             MmcDevice::EMmc(emmc) => Err(SdmmcHalError::ENOTIMPLEMENTED),
             MmcDevice::Unknown => Err(SdmmcHalError::ENOTIMPLEMENTED),
         }
     }
 
-    fn tune_sdcard_performance(&mut self) -> Result<(), SdmmcHalError> {
+    fn tune_sdcard_performance(
+        &mut self,
+        memory_and_invalidate_cache_fn: Option<(*mut [u8; 64], fn())>,
+    ) -> Result<(), SdmmcHalError> {
         let mut resp: [u32; 4] = [0; 4];
 
         if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
@@ -602,22 +686,48 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                 self.mmc_ios.bus_width = MmcBusWidth::Width4;
             }
 
-            if self.cap.contains(SdmmcHostCapability(MMC_TIMING_SD_HS)) {
-                let cmd = SdmmcCmd {
-                    cmdidx: MMC_CMD_SWITCH,
-                    resp_type: MMC_RSP_R1,
-                    cmdarg: 0x80FFFF01,
-                };
-                Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
-                if (resp[0] & 0x80) == 0 {
-                    // Bit 7 set - function switch error
-                    // If that bit is not set, continue
-                    self.mmc_ios.clock = self
-                        .hardware
-                        .sdmmc_config_clock(MmcTiming::SdHs.frequency())?;
-                    sdcard.card_state.timing = MmcTiming::SdHs;
+            if let Some((memory, cache_invalidate_function)) = memory_and_invalidate_cache_fn {
+                if self.cap.contains(SdmmcHostCapability(MMC_TIMING_SD_HS)) {
+                    /*
+                    How cmdarg for MMC_CMD_SWITCH is calculated
+                    // mode << 31: Places the mode (0 or 1) in the highest bit (bit 31) of cmdarg.
+                    // 0xFFFFFF: Sets bits 0-23 to 1, so each function group initially has 0xF (binary 1111), which means “no change” for each function group.
+                    let cmdarg: u32 = (1 << 31) | 0xFFFFFF;
+                    // group * 4: Shifts the 4-bit mask to the position of the specified function group.
+                    // ~(0xF << (group * 4)): Clears the 4 bits for the target group by masking them to 0.
+                    // If group = 1 (bus speed mode), then group * 4 = 4. The expression clears bits 4-7, leaving all other bits unaffected.
+                    // Clear bits for the bus speed mode group (group 1)
+                    cmd.cmdarg &= ~(0xF << (1 * 4));
+                    // Set value 1 (high-speed mode) for the bus speed mode group
+                    cmd.cmdarg |= 1 << (1 * 4);
+                    */
+
+                    let data = MmcData {
+                        blocksize: 64,
+                        blockcnt: 1,
+                        flags: MmcDataFlag::SdmmcDataRead,
+                        addr: memory as u64,
+                    };
+
+                    let cmd = SdmmcCmd {
+                        cmdidx: MMC_CMD_SWITCH,
+                        resp_type: MMC_RSP_R1,
+                        cmdarg: 0x80FFFF01,
+                    };
+                    Self::send_cmd_and_receive_resp(self.hardware, &cmd, Some(&data), &mut resp)?;
+
+                    cache_invalidate_function();
+
+                    // Parse the data in memory: *mut [u8; 64] here to determine if the switch cmd succeed or not
+                    if (resp[0] & 0x80) == 0 {
+                        // Bit 7 set - function switch error
+                        // If that bit is not set, continue
+                        sdcard.card_state.timing = MmcTiming::SdHs;
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+            } else {
+                sdcard.card_state.timing = MmcTiming::Legacy;
             }
 
             // TODO: Add support for UHS I here
@@ -625,8 +735,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             // Set the card speed back to legacy
             self.mmc_ios.clock = self
                 .hardware
-                .sdmmc_config_clock(MmcTiming::Legacy.frequency())?;
-            sdcard.card_state.timing = MmcTiming::Legacy;
+                .sdmmc_config_clock(sdcard.card_state.timing.frequency())?;
             Ok(())
         } else {
             return Err(SdmmcHalError::EUNDEFINED);

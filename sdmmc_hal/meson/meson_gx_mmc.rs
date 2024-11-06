@@ -270,8 +270,7 @@ impl MesonSdmmcRegisters {
 
             cfg |= ilog2(data.blocksize) << CFG_BL_LEN_SHIFT;
 
-            // This value should only be 512
-            assert!(data.blocksize == 512);
+            // TODO: Maybe add blocksize is power of 2 check here?
 
             unsafe {
                 ptr::write_volatile(&mut self.cfg, cfg);
