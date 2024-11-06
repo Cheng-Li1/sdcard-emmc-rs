@@ -80,3 +80,18 @@ pub(crate) enum MmcDevice {
     Unknown,
     // TODO, when we decide to support emmc/sdio, modify this struct
 }
+
+/// Represents the different states of an SD or eMMC card.
+#[derive(Debug, PartialEq)]
+enum CardState {
+    Idle,
+    Ready,
+    Identification,
+    Standby,
+    Transfer,
+    SendingData,
+    ReceiveData,
+    Programming,
+    Disconnect,
+    Unknown,
+}
