@@ -565,6 +565,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         };
         Self::send_cmd_and_receive_resp(self.hardware, &cmd, None, &mut resp)?;
 
+        // SDHC/SDXC default to 512 bytes sector size so I did not manually set it here
+
         self.mmc_ios.clock = self
             .hardware
             .sdmmc_config_clock(MmcTiming::Legacy.frequency())?;
@@ -631,13 +633,14 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
     ///     - `fn()`: A function pointer that, when called, invalidates the cache for the range
     ///       `addr` to `addr + 64 bytes`. This function should ensure cache consistency for
     ///       that specific memory range. If `None`, no buffer is used, and the tune performance function
-    ///       will not attempt to change the card speed class.
+    ///       will not attempt to change the card speed class. The fn should not take any variables and would
+    ///       not be stored. By this way, the protocol layer only has the minimal privilege it required for cache invalidation.
     ///
     /// # Returns
     /// - `Result<(), SdmmcHalError>`: `Ok(())` if tuning was successful, or an error otherwise.
     pub fn tune_performance(
         &mut self,
-        memory_and_invalidate_cache_fn: Option<(*mut [u8; 64], fn())>,
+        memory_and_invalidate_cache_fn: Option<(&mut impl AsMut<[u8; 64]>, fn())>,
     ) -> Result<(), SdmmcHalError> {
         let mmc_device = self.mmc_device.as_mut().ok_or(SdmmcHalError::ENOCARD)?;
 
@@ -656,7 +659,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
     fn tune_sdcard_performance(
         &mut self,
-        memory_and_invalidate_cache_fn: Option<(*mut [u8; 64], fn())>,
+        memory_and_invalidate_cache_fn: Option<(&mut impl AsMut<[u8; 64]>, fn())>,
     ) -> Result<(), SdmmcHalError> {
         let mut resp: [u32; 4] = [0; 4];
 
@@ -686,8 +689,12 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                 self.mmc_ios.bus_width = MmcBusWidth::Width4;
             }
 
+            sdcard.card_state.timing = MmcTiming::Legacy;
+
             if let Some((memory, cache_invalidate_function)) = memory_and_invalidate_cache_fn {
                 if self.cap.contains(SdmmcHostCapability(MMC_TIMING_SD_HS)) {
+                    let memory_array = memory.as_mut();
+                    let memory_addr= memory_array.as_ptr() as u64;
                     /*
                     How cmdarg for MMC_CMD_SWITCH is calculated
                     // mode << 31: Places the mode (0 or 1) in the highest bit (bit 31) of cmdarg.
@@ -706,7 +713,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                         blocksize: 64,
                         blockcnt: 1,
                         flags: MmcDataFlag::SdmmcDataRead,
-                        addr: memory as u64,
+                        addr: memory_addr,
                     };
 
                     let cmd = SdmmcCmd {
@@ -718,16 +725,18 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
 
                     cache_invalidate_function();
 
-                    // Parse the data in memory: *mut [u8; 64] here to determine if the switch cmd succeed or not
+                    // Check if resp has any error
+                    // TODO: I should have a function that parse R1 command specifically
                     if (resp[0] & 0x80) == 0 {
                         // Bit 7 set - function switch error
                         // If that bit is not set, continue
-                        sdcard.card_state.timing = MmcTiming::SdHs;
+                        // Parse the data in memory: *mut [u8; 64] here to determine if the switch cmd succeed or not
+                        // Check if high-speed mode was enabled by the switch command
+                        if (memory_array[37] as u8 & 0x2) != 0 {
+                            sdcard.card_state.timing = MmcTiming::SdHs;
+                        }
                     }
-                    return Ok(());
                 }
-            } else {
-                sdcard.card_state.timing = MmcTiming::Legacy;
             }
 
             // TODO: Add support for UHS I here

@@ -36,10 +36,10 @@ const RETRY_CHANCE: u16 = 5;
 
 // Debug function for printing out content in one block
 #[allow(dead_code)]
-fn print_one_block(ptr: *const u8) {
+fn print_one_block(ptr: *const u8, num: usize) {
     unsafe {
-        // Iterate over the 512 bytes and print each one in hexadecimal format
-        for i in 0..512 {
+        // Iterate over the number of bytes and print each one in hexadecimal format
+        for i in 0..num {
             let byte = *ptr.add(i);
             if i % 16 == 0 {
                 debug_print!("\n{:04x}: ", i);
@@ -55,6 +55,10 @@ unsafe fn noop(_data: *const ()) {}
 unsafe fn noop_clone(_data: *const ()) -> RawWaker {
     RawWaker::new(_data, &VTABLE)
 }
+
+/// Since in .system file, the page we are providing to tune_performance function is uncached
+/// we do not need to provide a real cache invalidate function
+fn dummy_cache_invalidate_function() {}
 
 // A VTable that points to the no-op functions
 static VTABLE: RawWakerVTable = RawWakerVTable::new(noop_clone, noop, noop, noop);
@@ -76,9 +80,12 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     let unsafe_stolen_memory: u32;
 
     // This line of code actually is very unsafe!
-    // Consider
-    unsafe_stolen_memory = (meson_hal as *const _ as usize + 0x800) as u32;
-    assert!(unsafe_stolen_memory % 4 == 0);
+    // Considering the memory is stolen from the memory that has sdcard registers mapped in
+    {
+        unsafe_stolen_memory = (meson_hal as *const _ as usize + 0x800) as u32;
+        assert!(unsafe_stolen_memory % 8 == 0);
+        
+    }
 
     // Handling result in two different ways, by matching and unwrap_or_else
     let res = SdmmcProtocol::new(meson_hal);
@@ -93,7 +100,7 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
 
     // TODO: Should tuning be possible to fail?
     sdmmc_host
-        .tune_performance(Some(unsafe_stolen_memory))
+        .tune_performance(Some((unsafe_stolen_memory, dummy_cache_invalidate_function)))
         .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
 
     let mut irq_to_enable = MMC_INTERRUPT_ERROR | MMC_INTERRUPT_END_OF_CHAIN;
