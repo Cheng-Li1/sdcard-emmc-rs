@@ -272,6 +272,8 @@ impl MesonSdmmcRegisters {
 
             // TODO: Maybe add blocksize is power of 2 check here?
 
+            debug_log!("Configure register value: 0x{:08x}", cfg);
+
             unsafe {
                 ptr::write_volatile(&mut self.cfg, cfg);
             };
@@ -423,8 +425,7 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         let mut data_addr: u32 = 0u32;
         if let Some(mmc_data) = data {
             // TODO: Check what if the addr is u32::MAX, will the sdcard still working?
-            if mmc_data.blocksize != MESON_SDCARD_SECTOR_SIZE
-                || mmc_data.addr >= (WRITE_ADDR_UPPER as u64)
+            if mmc_data.addr >= (WRITE_ADDR_UPPER as u64)
                 || mmc_data.blockcnt == 0
                 || mmc_data.blockcnt > MAX_BLOCK_PER_TRANSFER
             {
@@ -453,9 +454,11 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         }
 
         // Clear the response register, for testing & debugging
+        /* 
         unsafe {
             ptr::write_volatile(&mut self.cmd_rsp, 0u32);
         }
+        */
 
         unsafe {
             ptr::write_volatile(&mut self.cmd_arg, cmd.cmdarg);
@@ -480,14 +483,14 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         }
 
         if (status & STATUS_RESP_TIMEOUT) != 0 {
-            debug_log!("SDMMC: CARD TIMEOUT!");
+            debug_log!("SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}", status);
             return Err(SdmmcHalError::ETIMEDOUT);
         }
 
         let mut return_val: Result<(), SdmmcHalError> = Ok(());
 
         if (status & STATUS_ERR_MASK) != 0 {
-            debug_log!("SDMMC: CARD IO ERROR!");
+            debug_log!("SDMMC: CARD IO ERROR! Host status register: 0x{:08x}", status);
             return_val = Err(SdmmcHalError::EIO);
         }
 

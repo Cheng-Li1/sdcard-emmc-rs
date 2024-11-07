@@ -36,7 +36,7 @@ const RETRY_CHANCE: u16 = 5;
 
 // Debug function for printing out content in one block
 #[allow(dead_code)]
-fn print_one_block(ptr: *const u8, num: usize) {
+unsafe fn print_one_block(ptr: *const u8, num: usize) {
     unsafe {
         // Iterate over the number of bytes and print each one in hexadecimal format
         for i in 0..num {
@@ -77,14 +77,14 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     }
     let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
 
-    let unsafe_stolen_memory: u32;
+    let unsafe_stolen_memory: &mut [u8; 64];
 
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
-    {
-        unsafe_stolen_memory = (meson_hal as *const _ as usize + 0x800) as u32;
-        assert!(unsafe_stolen_memory % 8 == 0);
-        
+    unsafe {
+        let stolen_memory_addr = (meson_hal as *const _ as usize + 0x800) as *mut [u8; 64];
+        assert!(stolen_memory_addr as usize % 8 == 0);
+        unsafe_stolen_memory = &mut (*stolen_memory_addr);
     }
 
     // Handling result in two different ways, by matching and unwrap_or_else
@@ -97,11 +97,21 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     sdmmc_host
         .setup_card()
         .unwrap_or_else(|error| panic!("SDMMC: Error at setup {:?}", error));
+    
+    let mut test: u32 = 0;
+    let _ = sdmmc_host.enable_interrupt(&mut test);
 
     // TODO: Should tuning be possible to fail?
     sdmmc_host
-        .tune_performance(Some((unsafe_stolen_memory, dummy_cache_invalidate_function)))
+        .tune_performance(Some((
+            unsafe_stolen_memory,
+            dummy_cache_invalidate_function,
+        )))
         .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
+
+    unsafe {
+        print_one_block(unsafe_stolen_memory.as_ptr(), 64);
+    }
 
     let mut irq_to_enable = MMC_INTERRUPT_ERROR | MMC_INTERRUPT_END_OF_CHAIN;
 
