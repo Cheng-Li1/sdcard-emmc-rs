@@ -387,7 +387,8 @@ impl SdmmcHardware for MesonSdmmcRegisters {
          * Other SoCs use CLK_CO_PHASE_180 by default.
          * But Linux default to use CLK_CO_PHASE_180
          */
-        meson_mmc_clk |= CLK_CO_PHASE_180;
+        // meson_mmc_clk |= CLK_CO_PHASE_180;
+        meson_mmc_clk |= CLK_CO_PHASE_270;
         meson_mmc_clk |= CLK_TX_PHASE_000;
 
         meson_mmc_clk |= clk_src;

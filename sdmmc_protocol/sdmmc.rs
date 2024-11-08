@@ -279,6 +279,8 @@ pub trait SdmmcHardware {
 
     /// Change the clock, return the value or do not change it at all
     /// If the freq is set to zero, this function should try to stop the clock completely
+    /// Beware at higher frequency, you may need to play with delay, adjust and clock phase
+    /// to ensure that the clock edges (sampling points) occur just in time for the valid data window.
     fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
@@ -770,7 +772,8 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                         // If that bit is not set, continue
                         // Parse the data in memory: *mut [u8; 64] here to determine if the switch cmd succeed or not
                         // Check if high-speed mode was enabled by the switch command
-                        if (memory[19] as u8 & 0x1) != 0 {
+                        // TODO: Double check here about the timing switch success, I am not sure if I am doing here is right or not
+                        if (memory[16] as u8 & 0x1) != 0 {
                             sdcard.card_state.timing = MmcTiming::SdHs;
                             sel4_microkit::debug_println!("Tuning speed card succeed!");
                         }
@@ -785,8 +788,16 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                 .hardware
                 .sdmmc_config_clock(sdcard.card_state.timing.frequency())?;
 
+            /*
+                self.mmc_ios.clock = self
+                .hardware
+                .sdmmc_config_clock(sdcard.card_state.timing.frequency())?;
+            */
+
+            debug_println!("Current frequency: {}Hz", self.mmc_ios.clock);
+
             self.test_read_one_block( 0, 0xf5500064);
-            
+
             Ok(())
         } else {
             return Err(SdmmcHalError::EUNDEFINED);
