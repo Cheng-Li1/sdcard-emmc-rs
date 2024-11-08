@@ -454,11 +454,9 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         }
 
         // Clear the response register, for testing & debugging
-        /* 
         unsafe {
             ptr::write_volatile(&mut self.cmd_rsp, 0u32);
         }
-        */
 
         unsafe {
             ptr::write_volatile(&mut self.cmd_arg, cmd.cmdarg);

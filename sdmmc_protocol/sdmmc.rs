@@ -14,7 +14,7 @@ use sdmmc_capability::{
     MMC_TIMING_UHS_SDR12,
 };
 use sdmmc_constant::{
-    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_SET_BLOCKLEN, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_SWITCH, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR
+    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_SET_BLOCKLEN, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_SWITCH, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC
 };
 use sel4_microkit::{debug_print, debug_println};
 
@@ -670,27 +670,15 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         }
     }
 
-    pub fn test_read_one_block(&mut self, blocksize: u32, start_idx: u64, destination: u64) {
+    pub fn test_read_one_block(&mut self, start_idx: u64, destination: u64) {
         let data: MmcData = MmcData {
-            blocksize,
+            blocksize: 512,
             blockcnt: 1,
             flags: MmcDataFlag::SdmmcDataRead,
             addr: destination,
         };
         debug_println!("Gonna test read one block!");
         let mut resp: [u32; 4] = [0; 4];
-        // TODO: Add more validation check in the future
-        if blocksize != 512 {
-            debug_println!("Change block len!");
-            let set_blocklen_cmd = SdmmcCmd {
-                cmdidx: MMC_CMD_SET_BLOCKLEN,
-                resp_type: MMC_RSP_R1,
-                cmdarg: blocksize,
-            };
-            if let Err(error) = Self::send_cmd_and_receive_resp(self.hardware, &set_blocklen_cmd, None, &mut resp) {
-                panic!("Error setting block length: {:?}", error);
-            }
-        }
         let cmd_arg: u64 = start_idx;
         let cmd = SdmmcCmd {
             cmdidx: MMC_CMD_READ_SINGLE_BLOCK,
@@ -700,17 +688,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
         if let Err(error) = Self::send_cmd_and_receive_resp(self.hardware, &cmd, Some(&data), &mut resp) {
             debug_println!("Error in reading");
         }
-        unsafe { Self::print_one_block(destination as *mut u8, blocksize as usize) };
-        if blocksize != 512 {
-            let set_blocklen_cmd = SdmmcCmd {
-                cmdidx: MMC_CMD_SET_BLOCKLEN,
-                resp_type: MMC_RSP_R1,
-                cmdarg: 512,
-            };
-            if let Err(error) = Self::send_cmd_and_receive_resp(self.hardware, &set_blocklen_cmd, None, &mut resp) {
-                panic!("Error setting block length: {:?}", error);
-            }
-        }
+        unsafe { Self::print_one_block(destination as *mut u8, 512) };
     }
 
     fn tune_sdcard_performance(
@@ -775,7 +753,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                     };
 
                     let cmd = SdmmcCmd {
-                        cmdidx: MMC_CMD_SWITCH,
+                        cmdidx: SD_CMD_SWITCH_FUNC,
                         resp_type: MMC_RSP_R1,
                         cmdarg: 0x80FFFF01,
                     };
@@ -792,7 +770,7 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
                         // If that bit is not set, continue
                         // Parse the data in memory: *mut [u8; 64] here to determine if the switch cmd succeed or not
                         // Check if high-speed mode was enabled by the switch command
-                        if (memory[37] as u8 & 0x2) != 0 {
+                        if (memory[19] as u8 & 0x1) != 0 {
                             sdcard.card_state.timing = MmcTiming::SdHs;
                             sel4_microkit::debug_println!("Tuning speed card succeed!");
                         }
@@ -806,7 +784,9 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             self.mmc_ios.clock = self
                 .hardware
                 .sdmmc_config_clock(sdcard.card_state.timing.frequency())?;
-            self.test_read_one_block(512, 0, 0x50000000);
+
+            self.test_read_one_block( 0, 0xf5500064);
+            
             Ok(())
         } else {
             return Err(SdmmcHalError::EUNDEFINED);

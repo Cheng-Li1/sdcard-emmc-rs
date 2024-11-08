@@ -82,7 +82,7 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
     unsafe {
-        let stolen_memory_addr = (meson_hal as *const _ as usize + 0x800) as *mut [u8; 64];
+        let stolen_memory_addr = 0xf5500000 as *mut [u8; 64];
         assert!(stolen_memory_addr as usize % 8 == 0);
         unsafe_stolen_memory = &mut (*stolen_memory_addr);
     }
@@ -100,6 +100,22 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     
     let mut test: u32 = 0;
     let _ = sdmmc_host.enable_interrupt(&mut test);
+
+    /*
+    unsafe {
+        unsafe_stolen_memory[0] = 1;
+        unsafe_stolen_memory[10] = 64;
+        unsafe_stolen_memory[53] = 98;
+
+        debug_println!("printing out memory have value written in it");
+
+        print_one_block(unsafe_stolen_memory.as_ptr(), 512);
+
+        assert!(unsafe_stolen_memory[0] == 1);
+        assert!(unsafe_stolen_memory[10] == 64);
+        assert!(unsafe_stolen_memory[53] == 98);
+    }
+    */
 
     // TODO: Should tuning be possible to fail?
     sdmmc_host
