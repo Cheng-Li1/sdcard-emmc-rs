@@ -342,6 +342,27 @@ pub trait SdmmcHardware {
     fn sdmmc_ack_interrupt(&mut self, irq_enabled: &u32) -> Result<(), SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
+
+    /// At higher clock frequencies, timing mismatches can occur between the host's sampling point and the valid data window 
+    /// from the SD card during read operations. This can lead to CRC errors, as the host may sample incoming data outside the 
+    /// stable data window, even when the SD card’s response appears normal.
+    ///
+    /// To address this, the `sdmmc_tune_sampling` function is introduced. This function aims to adjust the host's sampling 
+    /// timing to align with the SD card’s data output window, reducing errors caused by timing misalignment.
+    ///
+    /// In some cases, a similar function (e.g., `sdmmc_tune_sending_data_window`) may be needed to tune the timing of data 
+    /// signals sent from the host to the SD card. This would ensure that the SD card reliably receives data, especially 
+    /// at high frequencies. However, output timing tends to be more stable, and a specific function for tuning host-to-card 
+    /// data timing is often not implemented or needed, as seen in the Linux driver.
+    /// 
+    /// The cooperation between protocol layer and hardware layer by this function is like: the protocol layer send
+    /// the MMC_CMD_SEND_TUNING_BLOCK request. And if the result receive back is in error, the protocol layer will call this
+    /// tune_sampling function once again. If tune sampling has run out of option, return an error. 
+    /// It is suggest that hardware layer also do some book keeping about the suitable delay to making the tuning 
+    /// sampling process faster.
+    fn sdmmc_tune_sampling(&mut self) -> Result<(), SdmmcHalError> {
+        return Err(SdmmcHalError::ENOTIMPLEMENTED);
+    }
 }
 
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
@@ -795,8 +816,6 @@ impl<'a, T: SdmmcHardware> SdmmcProtocol<'a, T> {
             */
 
             debug_println!("Current frequency: {}Hz", self.mmc_ios.clock);
-
-            self.test_read_one_block( 0, 0xf5500064);
 
             Ok(())
         } else {
