@@ -171,49 +171,59 @@ fn ilog2(x: u32) -> u32 {
  *
  */
 #[repr(C)]
-pub struct MesonSdmmcRegisters {
-    pub clock: u32,        // 0x00: Clock control register
+struct MesonSdmmcRegisters {
+    clock: u32,            // 0x00: Clock control register
     _reserved0: [u32; 15], // Padding for other unused registers (0x04 - 0x3C)
-    pub start: u32,        // 0x40: Start register
-    pub cfg: u32,          // 0x44: Configuration register
-    pub status: u32,       // 0x48: Status register
-    pub irq_en: u32,       // 0x4C: Interrupt enable register
-    pub cmd_cfg: u32,      // 0x50: Command configuration register
-    pub cmd_arg: u32,      // 0x54: Command argument register
-    pub cmd_dat: u32,      // 0x58: Command data register (for DMA address)
-    pub cmd_rsp: u32,      // 0x5C: Command response register
-    pub cmd_rsp1: u32,     // 0x60: Command response register 1
-    pub cmd_rsp2: u32,     // 0x64: Command response register 2
-    pub cmd_rsp3: u32,     // 0x68: Command response register 3
+    start: u32,            // 0x40: Start register
+    cfg: u32,              // 0x44: Configuration register
+    status: u32,           // 0x48: Status register
+    irq_en: u32,           // 0x4C: Interrupt enable register
+    cmd_cfg: u32,          // 0x50: Command configuration register
+    cmd_arg: u32,          // 0x54: Command argument register
+    cmd_dat: u32,          // 0x58: Command data register (for DMA address)
+    cmd_rsp: u32,          // 0x5C: Command response register
+    cmd_rsp1: u32,         // 0x60: Command response register 1
+    cmd_rsp2: u32,         // 0x64: Command response register 2
+    cmd_rsp3: u32,         // 0x68: Command response register 3
     _reserved1: [u32; 9],  // Padding for other unused registers (0x6C - 0x90)
-    pub rxd: u32,          // 0x94: Receive data register (not used)
-    pub txd: u32,          // 0x94: Transmit data register (not used, same as RXD)
+    rxd: u32,              // 0x94: Receive data register (not used)
+    txd: u32,              // 0x94: Transmit data register (not used, same as RXD)
                            // Add other registers as needed
 }
-
-impl Unpin for MesonSdmmcRegisters {}
 
 impl MesonSdmmcRegisters {
     /// This new use unsafe under the hood, ensure correct memory page is mapped into
     /// the respective virtual memory address and do not do things stupid
-    pub fn new() -> &'static mut MesonSdmmcRegisters {
+    fn new() -> &'static mut MesonSdmmcRegisters {
         unsafe { &mut *(SDIO_BASE as *mut MesonSdmmcRegisters) }
+    }
+}
+
+pub struct SdmmcMesonHardware {
+    register: &'static mut MesonSdmmcRegisters,
+    // Put other variables here
+}
+
+impl SdmmcMesonHardware {
+    pub fn new() -> Self {
+        let register = MesonSdmmcRegisters::new();
+        SdmmcMesonHardware { register }
     }
 
     fn meson_reset(&mut self) {
         // Stop execution
         unsafe {
-            ptr::write_volatile(&mut self.start, 0);
+            ptr::write_volatile(&mut self.register.start, 0);
         }
 
         // Disable interrupt
         unsafe {
-            ptr::write_volatile(&mut self.irq_en, 0);
+            ptr::write_volatile(&mut self.register.irq_en, 0);
         }
 
         // Acknowledge interrupt
         unsafe {
-            ptr::write_volatile(&mut self.status, IRQ_EN_MASK | IRQ_SDIO);
+            ptr::write_volatile(&mut self.register.status, IRQ_EN_MASK | IRQ_SDIO);
         }
 
         // Set clock to a low freq
@@ -237,7 +247,7 @@ impl MesonSdmmcRegisters {
         cfg |= CFG_ERR_ABORT;
 
         unsafe {
-            ptr::write_volatile(&mut self.cfg, cfg);
+            ptr::write_volatile(&mut self.register.cfg, cfg);
         }
     }
 
@@ -264,18 +274,17 @@ impl MesonSdmmcRegisters {
         }
 
         if let Some(data) = data {
-            let mut cfg: u32 = unsafe { ptr::read_volatile(&self.cfg) };
+            let mut cfg: u32 = unsafe { ptr::read_volatile(&self.register.cfg) };
 
             cfg &= !CFG_BL_LEN_MASK;
 
             cfg |= ilog2(data.blocksize) << CFG_BL_LEN_SHIFT;
 
             // TODO: Maybe add blocksize is power of 2 check here?
-
-            debug_log!("Configure register value: 0x{:08x}", cfg);
+            // debug_log!("Configure register value: 0x{:08x}", cfg);
 
             unsafe {
-                ptr::write_volatile(&mut self.cfg, cfg);
+                ptr::write_volatile(&mut self.register.cfg, cfg);
             };
 
             if let MmcDataFlag::SdmmcDataWrite = data.flags {
@@ -288,7 +297,7 @@ impl MesonSdmmcRegisters {
         meson_mmc_cmd |= CMD_CFG_TIMEOUT_4S | CMD_CFG_OWNER | CMD_CFG_END_OF_CHAIN;
 
         unsafe {
-            ptr::write_volatile(&mut self.cmd_cfg, meson_mmc_cmd);
+            ptr::write_volatile(&mut self.register.cmd_cfg, meson_mmc_cmd);
         }
     }
 
@@ -300,15 +309,15 @@ impl MesonSdmmcRegisters {
             unsafe {
                 // Yes, this is in a reverse order as rsp0 and self.cmd_rsp3 is the least significant
                 // Check uboot read response code for more details
-                *rsp0 = ptr::read_volatile(&self.cmd_rsp3);
-                *rsp1 = ptr::read_volatile(&self.cmd_rsp2);
-                *rsp2 = ptr::read_volatile(&self.cmd_rsp1);
-                *rsp3 = ptr::read_volatile(&self.cmd_rsp);
+                *rsp0 = ptr::read_volatile(&self.register.cmd_rsp3);
+                *rsp1 = ptr::read_volatile(&self.register.cmd_rsp2);
+                *rsp2 = ptr::read_volatile(&self.register.cmd_rsp1);
+                *rsp3 = ptr::read_volatile(&self.register.cmd_rsp);
             }
             // debug_println!("Meson received 4 response back!");
         } else if cmd.resp_type & MMC_RSP_PRESENT != 0 {
             unsafe {
-                *rsp0 = ptr::read_volatile(&self.cmd_rsp);
+                *rsp0 = ptr::read_volatile(&self.register.cmd_rsp);
                 // debug_println!("Meson response value: {:#034b} (binary), {:#X} (hex)", *rsp0, *rsp0);
                 // debug_println!("Meson received 1 response back!");
             }
@@ -316,7 +325,7 @@ impl MesonSdmmcRegisters {
     }
 }
 
-impl SdmmcHardware for MesonSdmmcRegisters {
+impl SdmmcHardware for SdmmcMesonHardware {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcHalError> {
         let cap: u128 = MMC_TIMING_LEGACY
             | MMC_TIMING_SD_HS
@@ -350,11 +359,6 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         };
 
         return Ok((ios, info, cap));
-    }
-
-    #[inline]
-    fn sdmmc_log(&self, str: &str) {
-        debug_log!("{}", str);
     }
 
     fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
@@ -395,7 +399,7 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         meson_mmc_clk |= clk_div;
 
         unsafe {
-            ptr::write_volatile(&mut self.clock, meson_mmc_clk);
+            ptr::write_volatile(&mut self.register.clock, meson_mmc_clk);
         }
 
         Ok((clk / clk_div) as u64)
@@ -404,7 +408,7 @@ impl SdmmcHardware for MesonSdmmcRegisters {
     fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcHalError> {
         let mut meson_mmc_cfg: u32;
         unsafe {
-            meson_mmc_cfg = ptr::read_volatile(&self.cfg);
+            meson_mmc_cfg = ptr::read_volatile(&self.register.cfg);
         }
         match bus_width {
             MmcBusWidth::Width1 => meson_mmc_cfg |= CFG_BUS_WIDTH_1,
@@ -412,7 +416,7 @@ impl SdmmcHardware for MesonSdmmcRegisters {
             MmcBusWidth::Width8 => meson_mmc_cfg |= CFG_BUS_WIDTH_8,
         }
         unsafe {
-            ptr::write_volatile(&mut self.cfg, meson_mmc_cfg);
+            ptr::write_volatile(&mut self.register.cfg, meson_mmc_cfg);
         }
         Ok(())
     }
@@ -439,28 +443,27 @@ impl SdmmcHardware for MesonSdmmcRegisters {
 
         // Stop data transfer
         unsafe {
-            ptr::write_volatile(&mut self.start, 0u32);
+            ptr::write_volatile(&mut self.register.start, 0u32);
         }
 
         unsafe {
-            ptr::write_volatile(&mut self.cmd_dat, data_addr);
+            ptr::write_volatile(&mut self.register.cmd_dat, data_addr);
         }
 
         self.meson_mmc_set_up_cmd_cfg_and_cfg(&cmd, data);
 
-        // Reset status register before executing the cmd
-        // If we keep this line of code, do we still need to manually ack interrupts???
+        // I am still keeping this line of code here but I think it is not necessary
         unsafe {
-            ptr::write_volatile(&mut self.status, STATUS_MASK);
+            ptr::write_volatile(&mut self.register.status, STATUS_MASK);
         }
 
         // Clear the response register, for testing & debugging
         unsafe {
-            ptr::write_volatile(&mut self.cmd_rsp, 0u32);
+            ptr::write_volatile(&mut self.register.cmd_rsp, 0u32);
         }
 
         unsafe {
-            ptr::write_volatile(&mut self.cmd_arg, cmd.cmdarg);
+            ptr::write_volatile(&mut self.register.cmd_arg, cmd.cmdarg);
         }
 
         Ok(())
@@ -474,7 +477,7 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         let status: u32;
 
         unsafe {
-            status = ptr::read_volatile(&self.status);
+            status = ptr::read_volatile(&self.register.status);
         }
 
         if (status & STATUS_END_OF_CHAIN) == 0 {
@@ -482,14 +485,20 @@ impl SdmmcHardware for MesonSdmmcRegisters {
         }
 
         if (status & STATUS_RESP_TIMEOUT) != 0 {
-            debug_log!("SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}", status);
+            debug_log!(
+                "SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}",
+                status
+            );
             return Err(SdmmcHalError::ETIMEDOUT);
         }
 
         let mut return_val: Result<(), SdmmcHalError> = Ok(());
 
         if (status & STATUS_ERR_MASK) != 0 {
-            debug_log!("SDMMC: CARD IO ERROR! Host status register: 0x{:08x}", status);
+            debug_log!(
+                "SDMMC: CARD IO ERROR! Host status register: 0x{:08x}",
+                status
+            );
             return_val = Err(SdmmcHalError::EIO);
         }
 
@@ -502,12 +511,12 @@ impl SdmmcHardware for MesonSdmmcRegisters {
     fn sdmmc_enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {
         // Disable interrupt
         unsafe {
-            ptr::write_volatile(&mut self.irq_en, 0);
+            ptr::write_volatile(&mut self.register.irq_en, 0);
         }
 
         // Acknowledge interrupt
         unsafe {
-            ptr::write_volatile(&mut self.status, IRQ_EN_MASK | IRQ_SDIO);
+            ptr::write_volatile(&mut self.register.status, IRQ_EN_MASK | IRQ_SDIO);
         }
 
         let mut irq_bits_to_set: u32 = 0;
@@ -521,7 +530,7 @@ impl SdmmcHardware for MesonSdmmcRegisters {
             irq_bits_to_set |= IRQ_SDIO;
         }
         unsafe {
-            ptr::write_volatile(&mut self.irq_en, irq_bits_to_set);
+            ptr::write_volatile(&mut self.register.irq_en, irq_bits_to_set);
         }
         return Ok(());
     }
@@ -538,7 +547,7 @@ impl SdmmcHardware for MesonSdmmcRegisters {
             irq_bits_to_set |= IRQ_SDIO;
         }
         unsafe {
-            ptr::write_volatile(&mut self.status, irq_bits_to_set);
+            ptr::write_volatile(&mut self.register.status, irq_bits_to_set);
         }
         return Ok(());
     }

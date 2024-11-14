@@ -16,7 +16,7 @@ use sddf_blk::{
     blk_dequeue_req_helper, blk_enqueue_resp_helper, blk_queue_empty_req_helper,
     blk_queue_full_resp_helper, blk_queue_init_helper, BlkOp, BlkRequest, BlkStatus,
 };
-use sdmmc_hal::meson_gx_mmc::MesonSdmmcRegisters;
+use sdmmc_hal::meson_gx_mmc::SdmmcMesonHardware;
 
 use sdmmc_protocol::sdmmc::{
     sdmmc_capability::{MMC_INTERRUPT_END_OF_CHAIN, MMC_INTERRUPT_ERROR},
@@ -70,12 +70,12 @@ fn create_dummy_waker() -> Waker {
 }
 
 #[protection_domain(heap_size = 0x10000)]
-fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
+fn init() -> HandlerImpl<SdmmcMesonHardware> {
     debug_println!("Driver init!");
     unsafe {
         blk_queue_init_helper();
     }
-    let meson_hal: &mut MesonSdmmcRegisters = MesonSdmmcRegisters::new();
+    let meson_hal: SdmmcMesonHardware = SdmmcMesonHardware::new();
 
     let unsafe_stolen_memory: &mut [u8; 64];
 
@@ -97,7 +97,7 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     sdmmc_host
         .setup_card()
         .unwrap_or_else(|error| panic!("SDMMC: Error at setup {:?}", error));
-    
+
     let mut test: u32 = 0;
     let _ = sdmmc_host.enable_interrupt(&mut test);
 
@@ -125,10 +125,6 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
         )))
         .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
 
-    unsafe {
-        print_one_block(unsafe_stolen_memory.as_ptr(), 64);
-    }
-
     let mut irq_to_enable = MMC_INTERRUPT_ERROR | MMC_INTERRUPT_END_OF_CHAIN;
 
     // Should always succeed, at least for odroid C4
@@ -141,25 +137,17 @@ fn init() -> HandlerImpl<'static, MesonSdmmcRegisters> {
     }
 }
 
-struct HandlerImpl<'a, T: SdmmcHardware> {
-    future: Option<
-        Pin<
-            Box<
-                dyn Future<Output = (Result<(), SdmmcHalError>, Option<SdmmcProtocol<'a, T>>)> + 'a,
-            >,
-        >,
-    >,
-    sdmmc: Option<SdmmcProtocol<'a, T>>,
+struct HandlerImpl<T: SdmmcHardware> {
+    future: Option<Pin<Box<dyn Future<Output = (Result<(), SdmmcHalError>, SdmmcProtocol<T>)>>>>,
+    sdmmc: Option<SdmmcProtocol<T>>,
     request: Option<BlkRequest>,
     retry: u16,
 }
 
-impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
+impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
     type Error = Infallible;
 
     fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {
-        debug_println!("SDMMC_DRIVER: MESSAGE FROM CHANNEL: {}", channel.index());
-
         if channel.index() != INTERRUPT.index() && channel.index() != BLK_VIRTUALIZER.index() {
             debug_println!(
                 "SDMMC_DRIVER: Unknown channel sent me message: {}",
@@ -179,7 +167,7 @@ impl<'a, T: SdmmcHardware> Handler for HandlerImpl<'a, T> {
                         Poll::Ready((result, sdmmc)) => {
                             // debug_println!("SDMMC_DRIVER: Future completed with result");
                             self.future = None; // Reset the future once done
-                            self.sdmmc = sdmmc;
+                            self.sdmmc = Some(sdmmc);
                             if result.is_err() {
                                 debug_println!(
                                     "SDMMC_DRIVER: DISK ERROR ENCOUNTERED, possibly retry!"
