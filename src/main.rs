@@ -124,6 +124,10 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
             dummy_cache_invalidate_function,
         )))
         .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
+    
+    unsafe {
+        print_one_block(unsafe_stolen_memory.as_ptr(), 64);
+    }
 
     let mut irq_to_enable = MMC_INTERRUPT_ERROR | MMC_INTERRUPT_END_OF_CHAIN;
 

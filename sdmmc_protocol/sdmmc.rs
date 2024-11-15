@@ -433,6 +433,10 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // This command does not expect a response
         self.hardware.sdmmc_send_command(&cmd, None)?;
 
+        // TODO: A delay should be insert here, now it is using debug print to simulate the delay
+        // Check the sdcard soecification to see if this delay is indeed needed
+        debug_println!("Add some delay here!");
+        
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
             resp_type: MMC_RSP_R7,
@@ -997,7 +1001,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // This is a busy poll retry, we could poll infinitely if we trust the device to be correct
         let mut retry: u32 = 100000000;
 
-        sel4_microkit::debug_println!("Request sent! Let us wait!");
+        // sel4_microkit::debug_println!("Request sent! Let us wait!");
 
         while retry > 0 {
             // Try to receive the response
