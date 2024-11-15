@@ -1,7 +1,7 @@
 use core::ptr;
 
 use sdmmc_protocol::sdmmc::{
-    mmc_struct::MmcBusWidth,
+    mmc_struct::{MmcBusWidth, MmcTiming},
     sdmmc_capability::{
         MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_INTERRUPT_END_OF_CHAIN, MMC_INTERRUPT_ERROR,
         MMC_INTERRUPT_SDIO, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS,
@@ -67,6 +67,7 @@ pub const CFG_RESP_TIMEOUT_MASK: u32 = 0b1111 << 8;
 pub const CFG_RESP_TIMEOUT_256: u32 = 0b1000 << 8;
 pub const CFG_RC_CC_MASK: u32 = 0b1111 << 12;
 pub const CFG_RC_CC_16: u32 = 0b0100 << 12;
+pub const CFG_RC_CC_256: u32 = 0b1000 << 12;
 pub const CFG_SDCLK_ALWAYS_ON: u32 = 1 << 18;
 pub const CFG_AUTO_CLK: u32 = 1 << 23;
 pub const CFG_ERR_ABORT: u32 = 1 << 27;
@@ -173,7 +174,10 @@ fn ilog2(x: u32) -> u32 {
 #[repr(C)]
 struct MesonSdmmcRegisters {
     clock: u32,            // 0x00: Clock control register
-    _reserved0: [u32; 15], // Padding for other unused registers (0x04 - 0x3C)
+    delay1: u32,           // 0x04: Delay register one
+    delay2: u32,           // 0x08: Delay register two
+    adjust: u32,           // 0x0C: Adjust register
+    _reserved0: [u32; 12], // Padding for other unused registers (0x04 - 0x3C)
     start: u32,            // 0x40: Start register
     cfg: u32,              // 0x44: Configuration register
     status: u32,           // 0x48: Status register
@@ -199,17 +203,36 @@ impl MesonSdmmcRegisters {
     }
 }
 
+struct DelayConfig {
+    timing: MmcTiming,  // Clock rate in Hz
+    current_delay: u32, // Delay value in some unit, e.g., nanoseconds
+    tried_lowest_delay: u32,
+    tried_highest_delay: u32,
+}
+
 pub struct SdmmcMesonHardware {
     register: &'static mut MesonSdmmcRegisters,
+    delay: DelayConfig,
     // Put other variables here
 }
 
 impl SdmmcMesonHardware {
     pub fn new() -> Self {
         let register = MesonSdmmcRegisters::new();
-        SdmmcMesonHardware { register }
+        SdmmcMesonHardware {
+            register,
+            delay: DelayConfig {
+                timing: MmcTiming::CardSetup,
+                current_delay: 0,
+                tried_lowest_delay: 0,
+                tried_highest_delay: 0,
+            },
+        }
     }
 
+    /// It is quite obvious that this meson_reset function does not attempt to reset every registers as there are a lot of them
+    /// So there is one assumption here that the bootloader did not leave the host register in a very strange state 
+    /// that may breaks the driver
     fn meson_reset(&mut self) {
         // Stop execution
         unsafe {
@@ -238,6 +261,7 @@ impl SdmmcMesonHardware {
         cfg |= CFG_RESP_TIMEOUT_256 & CFG_RESP_TIMEOUT_MASK;
 
         // Set cmd interval
+        // TODO: Both Linux and uboot use 16 cycle interval but is it the right value?
         cfg |= CFG_RC_CC_16 & CFG_RC_CC_MASK;
 
         // Set block len to 512
@@ -323,6 +347,28 @@ impl SdmmcMesonHardware {
             }
         }
     }
+
+    /// The result that such function exists instead of using generic frequency is that different
+    /// hosts may have preferred frequency for speed classes. For example, in meson, the frequency for
+    /// UhsSdr104 would be 200Mhz instead of 208Mhz
+    fn meson_frequency(timing: MmcTiming) -> u64 {
+        match timing {
+            MmcTiming::Legacy => 25000000,
+            MmcTiming::MmcHs => 26000000,
+            MmcTiming::SdHs => 50000000,
+            MmcTiming::UhsSdr12 => 25000000,
+            MmcTiming::UhsSdr25 => 50000000,
+            MmcTiming::UhsSdr50 => 100000000,
+            MmcTiming::UhsSdr104 => 200000000,
+            MmcTiming::UhsDdr50 => 50000000,
+            MmcTiming::MmcDdr52 => 52000000,
+            MmcTiming::MmcHs200 => 200000000,
+            MmcTiming::MmcHs400 => 200000000,
+            MmcTiming::SdExp => panic!("Sdcard express speed class is not supported!"), // Example frequency, adjust as needed
+            MmcTiming::SdExp12V => panic!("Sdcard express speed class is not supported!"), // Example frequency, adjust as needed
+            MmcTiming::CardSetup => 400000, // Typical low frequency for card initialization
+        }
+    }
 }
 
 impl SdmmcHardware for SdmmcMesonHardware {
@@ -359,6 +405,11 @@ impl SdmmcHardware for SdmmcMesonHardware {
         };
 
         return Ok((ios, info, cap));
+    }
+
+    fn sdmmc_tune_sampling(&mut self) -> Result<(), SdmmcHalError> {
+        
+        Ok(())
     }
 
     fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {

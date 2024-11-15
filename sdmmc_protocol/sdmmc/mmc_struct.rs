@@ -11,7 +11,7 @@ pub enum MmcBusWidth {
 
 // Timing modes (could be an enum or use the bitflags constants defined earlier)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum MmcTiming {
+pub enum MmcTiming {
     Legacy = 0,
     MmcHs = 1,
     SdHs = 2,
@@ -29,7 +29,7 @@ pub(crate) enum MmcTiming {
 }
 
 impl MmcTiming {
-    pub fn frequency(&self) -> u64 {
+    pub(crate) fn frequency(&self) -> u64 {
         match self {
             MmcTiming::Legacy => 25000000,
             MmcTiming::MmcHs => 26000000,
