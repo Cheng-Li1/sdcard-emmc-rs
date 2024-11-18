@@ -7,7 +7,7 @@ use core::{
 use core::fmt::Write; // For write! macro with a buffer
 
 use bitflags::Flags;
-use mmc_struct::{MmcBusWidth, MmcDevice, MmcState, MmcTiming};
+use mmc_struct::{MmcBusWidth, MmcDevice, MmcState, MmcTiming, TuningState};
 use sdcard::{Cid, Csd, Sdcard};
 use sdmmc_capability::{
     SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_SD_HS,
@@ -362,7 +362,7 @@ pub trait SdmmcHardware {
     /// tune_sampling function once again. If tune sampling has run out of option, return an error.
     /// It is suggest that hardware layer also do some book keeping about the suitable delay to making the tuning
     /// sampling process faster.
-    fn sdmmc_tune_sampling(&mut self) -> Result<(), SdmmcHalError> {
+    fn sdmmc_tune_sampling(&mut self, state: TuningState) -> Result<(), SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 }
@@ -747,7 +747,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 if self.cap.contains(SdmmcHostCapability(MMC_TIMING_SD_HS)) {
                     let memory_addr = memory.as_ptr() as u64;
                     /*
-                    How cmdarg for MMC_CMD_SWITCH is calculated
+                    How cmdarg for SD_CMD_SWITCH_FUNC is calculated
                     // mode << 31: Places the mode (0 or 1) in the highest bit (bit 31) of cmdarg.
                     // 0xFFFFFF: Sets bits 0-23 to 1, so each function group initially has 0xF (binary 1111), which means “no change” for each function group.
                     let cmdarg: u32 = (1 << 31) | 0xFFFFFF;

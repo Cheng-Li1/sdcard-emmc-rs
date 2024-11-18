@@ -1,7 +1,7 @@
 use core::ptr;
 
 use sdmmc_protocol::sdmmc::{
-    mmc_struct::{MmcBusWidth, MmcTiming},
+    mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
         MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_INTERRUPT_END_OF_CHAIN, MMC_INTERRUPT_ERROR,
         MMC_INTERRUPT_SDIO, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS,
@@ -39,6 +39,10 @@ macro_rules! div_round_up {
     };
 }
 
+const SD_EMMC_ADJ: u32 = 16;
+const SD_EMMC_ADJUST_ADJ_DELAY_MASK: u32 = 0x3F << SD_EMMC_ADJ;
+const SD_EMMC_ADJ_ENABLE: u32 = 0x2000;
+
 // Constants translated from the C version
 // Clock related constant
 const SD_EMMC_CLKSRC_24M: u32 = 24000000; // 24 MHz
@@ -46,6 +50,7 @@ const SD_EMMC_CLKSRC_DIV2: u32 = 1000000000; // 1 GHz
 const MESON_MIN_FREQUENCY: u32 = div_round_up!(SD_EMMC_CLKSRC_24M, CLK_MAX_DIV);
 const MESON_MAX_FREQUENCY: u64 = 200000000; // 200 Mhz
 const CLK_MAX_DIV: u32 = 63;
+const CLK_SRC_MASK: u32 = 0b11000000;
 const CLK_SRC_24M: u32 = 0 << 6;
 const CLK_SRC_DIV2: u32 = 1 << 6;
 const CLK_CO_PHASE_000: u32 = 0 << 8;
@@ -212,26 +217,27 @@ struct DelayConfig {
 
 pub struct SdmmcMesonHardware {
     register: &'static mut MesonSdmmcRegisters,
-    delay: DelayConfig,
+    delay: Option<DelayConfig>,
+    timing: MmcTiming,
+    frequency: u32,
     // Put other variables here
 }
 
 impl SdmmcMesonHardware {
     pub fn new() -> Self {
         let register = MesonSdmmcRegisters::new();
+
+        // TODO: Call reset function here
         SdmmcMesonHardware {
             register,
-            delay: DelayConfig {
-                timing: MmcTiming::CardSetup,
-                current_delay: 0,
-                tried_lowest_delay: 0,
-                tried_highest_delay: 0,
-            },
+            delay: None,
+            timing: MmcTiming::CardSetup,
+            frequency: MESON_MIN_FREQUENCY,
         }
     }
 
     /// It is quite obvious that this meson_reset function does not attempt to reset every registers as there are a lot of them
-    /// So there is one assumption here that the bootloader did not leave the host register in a very strange state 
+    /// So there is one assumption here that the bootloader did not leave the host register in a very strange state
     /// that may breaks the driver
     fn meson_reset(&mut self) {
         // Stop execution
@@ -407,8 +413,64 @@ impl SdmmcHardware for SdmmcMesonHardware {
         return Ok((ios, info, cap));
     }
 
-    fn sdmmc_tune_sampling(&mut self) -> Result<(), SdmmcHalError> {
-        
+    fn sdmmc_tune_sampling(&mut self, state: TuningState) -> Result<(), SdmmcHalError> {
+        match state {
+            TuningState::TuningStart => {
+                if let Some(ref mut delay_config) = self.delay {
+                    delay_config.tried_highest_delay = delay_config.current_delay;
+                    delay_config.tried_lowest_delay = delay_config.current_delay;
+                }
+            }
+            TuningState::TuningContinue => (),
+            TuningState::TuningComplete => return Ok(()),
+        }
+
+        let mut delay_config = match self.delay.take() {
+            Some(config) if config.timing == self.timing => config,
+            _ => DelayConfig {
+                timing: self.timing,
+                current_delay: 0,
+                tried_lowest_delay: 0,
+                tried_highest_delay: 0,
+            },
+        };
+
+        let mut adjust: u32 = SD_EMMC_ADJ_ENABLE;
+        let clk: u32;
+
+        unsafe {
+            clk = ptr::read_volatile(&self.register.clock);
+        }
+
+        let clk_src: u32 = clk & CLK_SRC_MASK;
+
+        let mux_clk_freq: u32 = match clk_src {
+            CLK_SRC_24M => SD_EMMC_CLKSRC_24M,
+            CLK_SRC_DIV2 => SD_EMMC_CLKSRC_DIV2,
+            _ => return Err(SdmmcHalError::EUNDEFINED),
+        };
+
+        let max_div: u32 = div_round_up!(mux_clk_freq, self.frequency);
+
+        if max_div - delay_config.tried_highest_delay >= delay_config.tried_lowest_delay {
+            if max_div - delay_config.tried_highest_delay == 0 {
+                return Err(SdmmcHalError::EUNSUPPORTEDCARD);
+            }
+            delay_config.tried_highest_delay += 1;
+            delay_config.current_delay = delay_config.tried_highest_delay;
+        } else {
+            delay_config.tried_lowest_delay -= 1;
+            delay_config.current_delay = delay_config.tried_lowest_delay;
+        }
+
+        adjust |= (delay_config.current_delay << SD_EMMC_ADJ) & SD_EMMC_ADJUST_ADJ_DELAY_MASK;
+
+        self.delay = Some(delay_config);
+
+        unsafe {
+            ptr::write_volatile(&mut self.register.adjust, adjust);
+        }
+
         Ok(())
     }
 
