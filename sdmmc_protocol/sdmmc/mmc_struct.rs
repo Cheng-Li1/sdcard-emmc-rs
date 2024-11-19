@@ -9,7 +9,6 @@ pub enum MmcBusWidth {
     Width8 = 3,
 }
 
-// TODO: Rethink if the design of explicitly inform the hal about the start and the end of tuning is necessary or at least useful
 #[derive(Debug)]
 pub enum TuningState {
     TuningStart = 0,

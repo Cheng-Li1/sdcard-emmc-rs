@@ -201,10 +201,9 @@ struct MesonSdmmcRegisters {
 }
 
 impl MesonSdmmcRegisters {
-    /// This new use unsafe under the hood, ensure correct memory page is mapped into
-    /// the respective virtual memory address and do not do things stupid
-    fn new() -> &'static mut MesonSdmmcRegisters {
-        unsafe { &mut *(SDIO_BASE as *mut MesonSdmmcRegisters) }
+    /// This function is unsafe because it tries to
+    unsafe fn new() -> &'static mut MesonSdmmcRegisters {
+        &mut *(SDIO_BASE as *mut MesonSdmmcRegisters)
     }
 }
 
@@ -224,7 +223,7 @@ pub struct SdmmcMesonHardware {
 }
 
 impl SdmmcMesonHardware {
-    pub fn new() -> Self {
+    pub unsafe fn new() -> Self {
         let register = MesonSdmmcRegisters::new();
 
         // TODO: Call reset function here
@@ -253,6 +252,17 @@ impl SdmmcMesonHardware {
         // Acknowledge interrupt
         unsafe {
             ptr::write_volatile(&mut self.register.status, IRQ_EN_MASK | IRQ_SDIO);
+        }
+
+        // Reset delay and adjust registers
+        unsafe {
+            ptr::write_volatile(&mut self.register.delay1, 0);
+        }
+        unsafe {
+            ptr::write_volatile(&mut self.register.delay2, 0);
+        }
+        unsafe {
+            ptr::write_volatile(&mut self.register.adjust, 0);
         }
 
         // Set clock to a low freq
@@ -370,8 +380,8 @@ impl SdmmcMesonHardware {
             MmcTiming::MmcDdr52 => 52000000,
             MmcTiming::MmcHs200 => 200000000,
             MmcTiming::MmcHs400 => 200000000,
-            MmcTiming::SdExp => panic!("Sdcard express speed class is not supported!"), // Example frequency, adjust as needed
-            MmcTiming::SdExp12V => panic!("Sdcard express speed class is not supported!"), // Example frequency, adjust as needed
+            MmcTiming::SdExp => 985000000,
+            MmcTiming::SdExp12V => 985000000,
             MmcTiming::CardSetup => 400000, // Typical low frequency for card initialization
         }
     }
@@ -420,6 +430,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                     delay_config.tried_highest_delay = delay_config.current_delay;
                     delay_config.tried_lowest_delay = delay_config.current_delay;
                 }
+                return Ok(())
             }
             TuningState::TuningContinue => (),
             TuningState::TuningComplete => return Ok(()),
@@ -465,6 +476,8 @@ impl SdmmcHardware for SdmmcMesonHardware {
 
         adjust |= (delay_config.current_delay << SD_EMMC_ADJ) & SD_EMMC_ADJUST_ADJ_DELAY_MASK;
 
+        sel4_microkit::debug_println!("Tuning sampling function: Current delay: {}, tried lowest delay: {}, tried highest delay: {}, final register value: 0x{:08x}", delay_config.current_delay, delay_config.tried_lowest_delay, delay_config.tried_highest_delay, adjust);
+
         self.delay = Some(delay_config);
 
         unsafe {
@@ -504,8 +517,8 @@ impl SdmmcHardware for SdmmcMesonHardware {
          * Other SoCs use CLK_CO_PHASE_180 by default.
          * But Linux default to use CLK_CO_PHASE_180
          */
-        // meson_mmc_clk |= CLK_CO_PHASE_180;
-        meson_mmc_clk |= CLK_CO_PHASE_270;
+        meson_mmc_clk |= CLK_CO_PHASE_180;
+        // meson_mmc_clk |= CLK_CO_PHASE_270;
         meson_mmc_clk |= CLK_TX_PHASE_000;
 
         meson_mmc_clk |= clk_src;

@@ -75,7 +75,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     unsafe {
         blk_queue_init_helper();
     }
-    let meson_hal: SdmmcMesonHardware = SdmmcMesonHardware::new();
+    let meson_hal: SdmmcMesonHardware = unsafe { SdmmcMesonHardware::new() };
 
     let unsafe_stolen_memory: &mut [u8; 64];
 
@@ -124,7 +124,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
             dummy_cache_invalidate_function,
         )))
         .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
-    
+
     unsafe {
         print_one_block(unsafe_stolen_memory.as_ptr(), 64);
     }
