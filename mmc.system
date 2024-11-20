@@ -1,15 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <system>
-<memory_region name="blk_driver_config" size="0x1000" page_size="0x1000" />
-<memory_region name="blk_driver_request" size="0x200_000" page_size="0x200_000"/>
-<memory_region name="blk_driver_response" size="0x200_000" page_size="0x200_000"/>
+    <memory_region name="blk_driver_config" size="0x1000" page_size="0x1000" />
+    <memory_region name="blk_driver_request" size="0x200_000" page_size="0x200_000"/>
+    <memory_region name="blk_driver_response" size="0x200_000" page_size="0x200_000"/>
 
-
+    <!-- Device memory region -->
+    <memory_region name="gpio" size="0x1000" phys_addr="0xff800000"/>
     <memory_region name="sdmmc" size="0x1000" phys_addr="0xffe05000" />
+
+    <!-- Private data region -->
     <memory_region name="data_region" size="0x10000" phys_addr="0xf5500000" />
+
     <protection_domain name="sdmmc_driver" priority="100" >
         <program_image path="sdmmc_driver.elf" />
         <map mr="sdmmc" vaddr="0xffe05000" perms="rw" cached="false" />
+        <name="gpio" vaddr="0xff800000" perms="rw" cached="false" />
         
         <map mr="data_region" vaddr="0xf5500000" perms="rw" cached="false" />
         <map mr="blk_driver_config" vaddr="0x40000000" perms="rw" cached="false" setvar_vaddr="blk_config"     />
