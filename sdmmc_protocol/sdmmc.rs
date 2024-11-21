@@ -286,7 +286,7 @@ pub trait SdmmcHardware {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
-    fn sdmmc_tune_signal_voltage(&mut self, voltage: u32) -> Result<(), SdmmcHalError> {
+    fn sdmmc_set_signal_voltage(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
@@ -777,7 +777,6 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             }
         }
     }
-    
 
     fn tune_sdcard_performance(
         &mut self,
@@ -887,6 +886,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             }
 
             debug_println!("Current frequency: {}Hz", self.mmc_ios.clock);
+
+            self.hardware.sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
 
             Ok(())
         } else {

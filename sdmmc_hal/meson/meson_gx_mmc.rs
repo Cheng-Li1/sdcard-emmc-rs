@@ -33,6 +33,14 @@ mod os_layer {
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
 
+// The always on gpio pin pull 
+const AO_RTI_PIN_REGION_START: u64 = 0xff800014;
+const AO_RTI_PIN_REGION_END: u64 = 0xff800038;
+const AO_RTI_PULL_UP_REG: u64 = 0xff80002c;
+const AO_RTI_OUTPUT_ENABLE_REG: u64 = 0xff800024;
+const AO_RTI_OUTPUT_LEVEL_REG: u64 = 0xff800034;
+const AO_RTI_PULL_UP_EN_REG: u64 = 0xff800030;
+
 macro_rules! div_round_up {
     ($n:expr, $d:expr) => {
         (($n + $d - 1) / $d)
@@ -676,5 +684,72 @@ impl SdmmcHardware for SdmmcMesonHardware {
             ptr::write_volatile(&mut self.register.status, irq_bits_to_set);
         }
         return Ok(());
+    }
+
+    fn sdmmc_set_signal_voltage(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcHalError> {
+        match voltage {
+            MmcSignalVoltage::Voltage330 => {
+                let mut value: u32;
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
+                }
+                value &= !(1 << 6);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
+                }
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
+                }
+                value &= !(1 << 6);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                }
+            },
+            MmcSignalVoltage::Voltage180 => {
+                let mut value: u32;
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
+                }
+                value &= !(1 << 6);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
+                }
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
+                }
+                value |= 1 << 6;
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                }
+            },
+            MmcSignalVoltage::Voltage120 => return Err(SdmmcHalError::EINVAL),
+        }
+        // Disable pull-up/down for gpioAO_6
+        let mut value: u32;
+        unsafe {
+            value = ptr::read_volatile(AO_RTI_PULL_UP_EN_REG as *const u32);
+        }
+        value &= !(1 << 6); // Disable pull-up/down for gpioAO_6
+        unsafe {
+            ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
+        }
+        Ok(())
+        /* 
+        debug_log!("Reading memory region: {:#x} - {:#x}", AO_RTI_PIN_REGION_START, AO_RTI_PIN_REGION_END);
+
+        // Iterate over the region, assuming 4-byte aligned registers
+        let mut addr = AO_RTI_PIN_REGION_START;
+        while addr < AO_RTI_PIN_REGION_END {
+            unsafe {
+                // Cast the address to a pointer to u32
+                let ptr = addr as *const u32;
+                // Read the value using ptr::read_volatile
+                let value = ptr::read_volatile(ptr);
+                debug_log!("Address {:#x}: {:#x}", addr, value);
+            }
+            addr += 4; // Increment by 4 for the next 32-bit word
+        }
+        Ok(())
+        */
     }
 }
