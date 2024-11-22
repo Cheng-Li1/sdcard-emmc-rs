@@ -3,7 +3,9 @@ use core::ptr;
 use sdmmc_protocol::sdmmc::{
     mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
-        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_INTERRUPT_END_OF_CHAIN, MMC_INTERRUPT_ERROR, MMC_INTERRUPT_SDIO, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS
+        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_INTERRUPT_END_OF_CHAIN,
+        MMC_INTERRUPT_ERROR, MMC_INTERRUPT_SDIO, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS,
+        MMC_TIMING_UHS,
     },
     HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
     SdmmcHalError, SdmmcHardware,
@@ -32,7 +34,7 @@ mod os_layer {
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
 
-// The always on gpio pin pull 
+// The always on gpio pin pull
 const AO_RTI_PIN_REGION_START: u64 = 0xff800014;
 const AO_RTI_PIN_REGION_END: u64 = 0xff800038;
 const AO_RTI_PULL_UP_REG: u64 = 0xff80002c;
@@ -406,10 +408,10 @@ impl SdmmcMesonHardware {
         unsafe {
             // Read the current configuration register value
             let mut meson_mmc_cfg: u32 = ptr::read_volatile(&self.register.cfg);
-    
+
             // Update the CFG_STOP_CLOCK bit based on the `stop` parameter
             meson_mmc_cfg = (meson_mmc_cfg & !CFG_STOP_CLOCK) | ((stop as u32) * CFG_STOP_CLOCK);
-    
+
             // Write the updated value back to the configuration register
             ptr::write_volatile(&mut self.register.cfg, meson_mmc_cfg);
         }
@@ -419,10 +421,10 @@ impl SdmmcMesonHardware {
         unsafe {
             // Read the current configuration register value
             let mut meson_mmc_cfg: u32 = ptr::read_volatile(&self.register.cfg);
-    
+
             // Update the CFG_DDR_MODE bit based on the `enable` parameter
             meson_mmc_cfg = (meson_mmc_cfg & !CFG_DDR_MODE) | ((enable as u32) * CFG_DDR_MODE);
-    
+
             // Write the updated value back to the configuration register
             ptr::write_volatile(&mut self.register.cfg, meson_mmc_cfg);
         }
@@ -473,7 +475,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                     delay_config.tried_highest_delay = delay_config.current_delay;
                     delay_config.tried_lowest_delay = delay_config.current_delay;
                 }
-                return Ok(())
+                return Ok(());
             }
             TuningState::TuningContinue => (),
             TuningState::TuningComplete => return Ok(()),
@@ -603,7 +605,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         if timing == MmcTiming::UhsDdr50 || timing == MmcTiming::MmcDdr52 {
             self.meson_enable_ddr(true);
         }
-        
+
         // Update timing
         self.timing = timing;
         self.frequency = clk / clk_div;
@@ -631,7 +633,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         unsafe {
             // Read the status register
             let status = ptr::read_volatile(&self.register.status);
-    
+
             // Extract and return the DAT signal state
             Ok(((status & STATUS_DAT_MASK) >> STATUS_DAT_SHIFT) as u8)
         }
@@ -786,7 +788,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 unsafe {
                     ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
                 }
-            },
+            }
             MmcSignalVoltage::Voltage180 => {
                 let mut value: u32;
                 unsafe {
@@ -803,7 +805,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 unsafe {
                     ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
                 }
-            },
+            }
             MmcSignalVoltage::Voltage120 => return Err(SdmmcHalError::EINVAL),
         }
         // Disable pull-up/down for gpioAO_6
@@ -816,7 +818,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
             ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
         }
         Ok(())
-        /* 
+        /*
         debug_log!("Reading memory region: {:#x} - {:#x}", AO_RTI_PIN_REGION_START, AO_RTI_PIN_REGION_END);
 
         // Iterate over the region, assuming 4-byte aligned registers

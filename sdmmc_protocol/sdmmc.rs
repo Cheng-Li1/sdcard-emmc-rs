@@ -1,5 +1,7 @@
 use core::{
-    future::Future, pin::Pin, task::{Context, Poll, Waker}
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll, Waker},
 };
 
 use core::fmt::Write; // For write! macro with a buffer
@@ -12,7 +14,12 @@ use sdmmc_capability::{
     MMC_TIMING_UHS_SDR12,
 };
 use sdmmc_constant::{
-    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_SEND_TUNING_BLOCK, MMC_CMD_SET_BLOCKLEN, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_SWITCH, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V
+    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE,
+    MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD,
+    MMC_CMD_SEND_TUNING_BLOCK, MMC_CMD_SET_BLOCKLEN, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_SWITCH,
+    MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33,
+    MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH,
+    SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V,
 };
 use sel4_microkit::{debug_print, debug_println};
 
@@ -289,9 +296,9 @@ pub trait SdmmcHardware {
     }
 
     /// Reads the current state of the SD card data lanes.
-    /// 
-    /// This function is specifically used during voltage switching to check if the SD card 
-    /// acknowledges the switch by setting the data signal to low or high. 
+    ///
+    /// This function is specifically used during voltage switching to check if the SD card
+    /// acknowledges the switch by setting the data signal to low or high.
     ///
     /// Returns:
     /// - `u8`: The current state of the data lanes, where each bit represents a data line:
@@ -372,12 +379,12 @@ pub trait SdmmcHardware {
     /// It is suggest that hardware layer also do some book keeping about the suitable delay to making the tuning
     /// sampling process faster.
     /// Performs sampling point tuning for the SD/MMC interface.
-    /// 
+    ///
     /// The `TuningState` enum controls the tuning process, guiding the adjustments
     /// of the sampling point to achieve reliable communication at high speeds.
-    /// 
+    ///
     /// # Tuning Process
-    /// 
+    ///
     /// - Before tuning begins, the protocol layer calls `sdmmc_tune_sampling`
     ///   with the `TuningStart` state to initialize the tuning process.
     /// - The protocol layer then attempts to verify if the current sampling adjustment is effective.
@@ -387,13 +394,13 @@ pub trait SdmmcHardware {
     ///   point is found.
     /// - Once a working delay is identified, the protocol layer calls
     ///   `sdmmc_tune_sampling` with the `TuningComplete` state to finalize the tuning process.
-    /// 
+    ///
     /// # Parameters
     /// - `state`: The current tuning state, represented by the `TuningState` enum:
     ///   - `TuningStart`: Initializes the tuning process.
     ///   - `TuningContinue`: Adjusts the sampling point incrementally.
     ///   - `TuningComplete`: Finalizes the tuning once a reliable sampling point is found.
-    /// 
+    ///
     /// # Returns
     /// - `Ok(())`: Indicates successful completion of the requested tuning step.
     /// - `Err(SdmmcHalError)`: An error occurred during the tuning process.
@@ -471,7 +478,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // TODO: A delay should be insert here, now it is using debug print to simulate the delay
         // Check the sdcard soecification to see if this delay is indeed needed
         debug_println!("Add some delay here!");
-        
+
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
             resp_type: MMC_RSP_R7,
@@ -629,9 +636,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         // SDHC/SDXC default to 512 bytes sector size so I did not manually set it here
 
-        self.mmc_ios.clock = self
-            .hardware
-            .sdmmc_config_timing(MmcTiming::Legacy)?;
+        self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::Legacy)?;
 
         let card_state: MmcState = MmcState {
             timing: MmcTiming::Legacy,
@@ -757,7 +762,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         unsafe { Self::print_one_block(destination as *mut u8, 512) };
     }
 
-    fn test_sampling(&mut self, memory_addr: u64, cache_invalidate_function: fn()) -> Result<(), SdmmcHalError> {
+    fn test_sampling(
+        &mut self,
+        memory_addr: u64,
+        cache_invalidate_function: fn(),
+    ) -> Result<(), SdmmcHalError> {
         let mut resp: [u32; 4] = [0; 4];
 
         let data = MmcData {
@@ -773,31 +782,29 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0x00FFFFFF,
         };
 
-        Self::send_cmd_and_receive_resp(
-            &mut self.hardware,
-            &cmd,
-            Some(&data),
-            &mut resp,
-        )
+        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)
     }
 
     fn process_sampling(
         &mut self,
         memory_addr: u64,
-        cache_invalidate_function: fn()
+        cache_invalidate_function: fn(),
     ) -> Result<(), SdmmcHalError> {
-        self.hardware.sdmmc_tune_sampling(TuningState::TuningStart)?;
+        self.hardware
+            .sdmmc_tune_sampling(TuningState::TuningStart)?;
         loop {
             // Call test_sampling
             match self.test_sampling(memory_addr, cache_invalidate_function) {
                 Ok(_) => {
-                    self.hardware.sdmmc_tune_sampling(TuningState::TuningComplete)?;
+                    self.hardware
+                        .sdmmc_tune_sampling(TuningState::TuningComplete)?;
                     // If test_sampling succeeds, return Ok
                     return Ok(());
                 }
                 Err(SdmmcHalError::EIO) => {
                     // If test_sampling fails with EIO, try tuning the sampling point
-                    self.hardware.sdmmc_tune_sampling(TuningState::TuningContinue)?;
+                    self.hardware
+                        .sdmmc_tune_sampling(TuningState::TuningContinue)?;
                 }
                 Err(e) => {
                     // If test_sampling fails with an error other than EIO, return that error
@@ -835,15 +842,14 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             return Err(SdmmcHalError::EUNSUPPORTEDCARD);
         }
 
-        self.hardware.sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
+        self.hardware
+            .sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
 
         for _ in 0..100 {
             debug_println!("Print to wait until voltage is ready!");
         }
 
-        self.mmc_ios.clock = self
-        .hardware
-        .sdmmc_config_timing(MmcTiming::CardSetup)?;
+        self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
         for _ in 0..10 {
             debug_println!("Wait for clock to stable!");
@@ -860,13 +866,13 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         if signal & 0xF != 0xF {
             return Err(SdmmcHalError::EUNSUPPORTEDCARD);
         }
-        
+
         Ok(())
     }
 
     fn tune_sdcard_performance(
         &mut self,
-        memory_and_invalidate_cache_fn: Option<(&mut [u8; 64], fn())>
+        memory_and_invalidate_cache_fn: Option<(&mut [u8; 64], fn())>,
     ) -> Result<(), SdmmcHalError> {
         let mut resp: [u32; 4] = [0; 4];
 
@@ -917,6 +923,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                     cmd.cmdarg |= 1 << (1 * 4);
                     */
 
+                    // TODO: send SD_CMD_SWITCH_FUNC checking to get the speed class supported first before actually switch the speed class
                     let data = MmcData {
                         blocksize: 64,
                         blockcnt: 1,
@@ -924,10 +931,20 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                         addr: memory_addr,
                     };
 
+                    // cmdarg for switching to
+                    /*
+                    #define UHS_SDR12_BUS_SPEED	0
+                    #define HIGH_SPEED_BUS_SPEED	1
+                    #define UHS_SDR25_BUS_SPEED	1
+                    #define UHS_SDR50_BUS_SPEED	2
+                    #define UHS_SDR104_BUS_SPEED	3
+                    #define UHS_DDR50_BUS_SPEED	4
+                    */
+                    // TODO: cmdarg should not be hardcoded!
                     let cmd = SdmmcCmd {
                         cmdidx: SD_CMD_SWITCH_FUNC,
                         resp_type: MMC_RSP_R1,
-                        cmdarg: 0x80FFFF01,
+                        cmdarg: 0x80FFFF03,
                     };
                     Self::send_cmd_and_receive_resp(
                         &mut self.hardware,
@@ -949,15 +966,16 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                         // Check if high-speed mode was enabled by the switch command
                         // TODO: Double check here about the timing switch success, I am not sure if I am doing here is right or not
                         if (memory[16] as u8 & 0x1) != 0 {
-                            sdcard.card_state.timing = MmcTiming::SdHs;
+                            // TODO: This should not be hardcoded!
+                            sdcard.card_state.timing = MmcTiming::UhsSdr104;
                             sel4_microkit::debug_println!("Tuning speed card succeed!");
                         }
                     }
 
                     // Set up the correct clock frequency
                     self.mmc_ios.clock = self
-                    .hardware
-                    .sdmmc_config_timing(sdcard.card_state.timing)?;
+                        .hardware
+                        .sdmmc_config_timing(sdcard.card_state.timing)?;
 
                     self.process_sampling(memory_addr, cache_invalidate_function)?;
                     // TODO: Add support for UHS I here
@@ -965,8 +983,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             } else {
                 // Set the card speed back to legacy
                 self.mmc_ios.clock = self
-                .hardware
-                .sdmmc_config_timing(sdcard.card_state.timing)?;
+                    .hardware
+                    .sdmmc_config_timing(sdcard.card_state.timing)?;
             }
 
             debug_println!("Current frequency: {}Hz", self.mmc_ios.clock);

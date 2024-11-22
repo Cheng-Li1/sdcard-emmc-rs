@@ -34,7 +34,7 @@ pub enum MmcTiming {
     SdExp12V = 12,
     CardSetup = 13, // Additional frequency for card setup
     CardSleep = 14,
-    ClockStop = 15, 
+    ClockStop = 15,
 }
 
 impl MmcTiming {
