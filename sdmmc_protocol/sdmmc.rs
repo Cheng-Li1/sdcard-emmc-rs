@@ -783,6 +783,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         };
 
         Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)
+        // TODO: Add validate the content of data returned here, but it is optional because
+        // if there is not error it must has passed the CRC check!
     }
 
     fn process_sampling(
@@ -868,6 +870,16 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         Ok(())
+    }
+
+    /// Right now the speed switch is done hackily
+    /// The speed switch is hardcoded to switch to UHS SDR104
+    /// If the card does not support UHS SDR104, the switch will fail!
+    /// Implement this sdcard switch function to avoid this hackiness!
+    /// Like first get the speed classes the sdcard support by this function
+    /// and then switch to the proper speed class!
+    fn sdcard_switch_function(&mut self) {
+        todo!()
     }
 
     fn tune_sdcard_performance(
