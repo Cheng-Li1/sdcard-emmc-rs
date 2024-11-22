@@ -1,7 +1,5 @@
 use core::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll, Waker},
+    future::Future, pin::Pin, task::{Context, Poll, Waker}
 };
 
 use core::fmt::Write; // For write! macro with a buffer
@@ -14,7 +12,7 @@ use sdmmc_capability::{
     MMC_TIMING_UHS_SDR12,
 };
 use sdmmc_constant::{
-    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_SEND_TUNING_BLOCK, MMC_CMD_SET_BLOCKLEN, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_SWITCH, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC
+    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_SEND_TUNING_BLOCK, MMC_CMD_SET_BLOCKLEN, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_SWITCH, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V
 };
 use sel4_microkit::{debug_print, debug_println};
 
@@ -278,7 +276,7 @@ pub trait SdmmcHardware {
     /// If the freq is set to zero, this function should try to stop the clock completely
     /// Beware at higher frequency, you may need to play with delay, adjust and clock phase
     /// to ensure that the clock edges (sampling points) occur just in time for the valid data window.
-    fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
+    fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
@@ -287,6 +285,22 @@ pub trait SdmmcHardware {
     }
 
     fn sdmmc_set_signal_voltage(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcHalError> {
+        return Err(SdmmcHalError::ENOTIMPLEMENTED);
+    }
+
+    /// Reads the current state of the SD card data lanes.
+    /// 
+    /// This function is specifically used during voltage switching to check if the SD card 
+    /// acknowledges the switch by setting the data signal to low or high. 
+    ///
+    /// Returns:
+    /// - `u8`: The current state of the data lanes, where each bit represents a data line:
+    ///   - `DAT0` corresponds to the least significant bit (LSB).
+    ///   - `DAT7` corresponds to the most significant bit (MSB).
+    ///
+    /// Note:
+    /// - This function is not yet implemented and currently returns an `ENOTIMPLEMENTED` error.
+    fn sdmmc_read_datalanes(&self) -> Result<u8, SdmmcHalError> {
         return Err(SdmmcHalError::ENOTIMPLEMENTED);
     }
 
@@ -434,7 +448,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             self.mmc_ios.vdd = 330;
         }
 
-        let clock = self.hardware.sdmmc_config_clock(INIT_CLOCK_RATE)?;
+        let clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
         self.mmc_ios.clock = clock;
 
@@ -481,12 +495,19 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
     }
 
+    /// From uboot
+    /// Most cards do not answer if some reserved bits
+    /// in the ocr are set. However, Some controller
+    /// can set bit 7 (reserved for low voltages), but
+    /// how to manage low voltages SD card is not yet
+    /// specified.
     fn setup_sdcard_cont(&mut self) -> Result<Sdcard, SdmmcHalError> {
         let mut cmd: SdmmcCmd;
         let mut resp: [u32; 4] = [0; 4];
         // Uboot define this value to be 1000...
         let mut timeout: u16 = 1000;
         loop {
+            debug_println!("Sending SD_CMD_APP_SEND_OP_COND!");
             // Prepare CMD55 (APP_CMD)
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_APP_CMD,
@@ -516,7 +537,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
             )) {
                 cmd.cmdarg |= OCR_S18R;
-                cmd.cmdarg |= MMC_VDD_165_195;
+                // cmd.cmdarg |= MMC_VDD_165_195;
             }
 
             // Send ACMD41
@@ -535,6 +556,14 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             timeout -= 1;
         }
 
+        // TODO: Add check here to return error when enocounter SDSC card
+        if self.cap.contains(sdmmc_capability::SdmmcHostCapability(
+            MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
+        )) {
+            self.tune_sdcard_switch_uhs18v()?;
+            self.mmc_ios.signal_voltage = MmcSignalVoltage::Voltage180;
+        }
+
         // 4. Send CMD2 to get the CID register
         cmd = SdmmcCmd {
             cmdidx: MMC_CMD_ALL_SEND_CID,
@@ -550,7 +579,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             | ((resp[2] as u128) << 32)
             | (resp[3] as u128);
 
-        // TODO: Figure out a better way to do this then adding microkit crate
+        // TODO: Figure out a better way to do this than adding microkit crate
         sel4_microkit::debug_println!(
             "CID: {:08x} {:08x} {:08x} {:08x}",
             resp[0],
@@ -602,7 +631,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         self.mmc_ios.clock = self
             .hardware
-            .sdmmc_config_clock(MmcTiming::Legacy.frequency())?;
+            .sdmmc_config_timing(MmcTiming::Legacy)?;
 
         let card_state: MmcState = MmcState {
             timing: MmcTiming::Legacy,
@@ -677,7 +706,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         let mmc_device = self.mmc_device.as_mut().ok_or(SdmmcHalError::ENOCARD)?;
 
         // Turn down the clock frequency
-        self.mmc_ios.clock = self.hardware.sdmmc_config_clock(INIT_CLOCK_RATE)?;
+        self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
         match mmc_device {
             MmcDevice::Sdcard(sdcard) => {
@@ -778,6 +807,63 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
     }
 
+    /// Switch voltage function
+    fn tune_sdcard_switch_uhs18v(&mut self) -> Result<(), SdmmcHalError> {
+        sel4_microkit::debug_println!("Entering tune sdcard signal voltage function!");
+        let mut resp: [u32; 4] = [0; 4];
+        let cmd = SdmmcCmd {
+            cmdidx: SD_CMD_SWITCH_UHS18V,
+            resp_type: MMC_RSP_R1,
+            cmdarg: 0, // Argument for 4-bit mode (0 for 1-bit mode)
+        };
+        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+        sel4_microkit::debug_println!("Switch voltage prepared!");
+
+        self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
+
+        let mut signal: u8 = 0xFF;
+
+        for _ in 0..100 {
+            signal = self.hardware.sdmmc_read_datalanes()?;
+            sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
+            if signal & 0xF == 0x0 {
+                break;
+            }
+        }
+
+        if signal & 0xF != 0x0 {
+            return Err(SdmmcHalError::EUNSUPPORTEDCARD);
+        }
+
+        self.hardware.sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
+
+        for _ in 0..100 {
+            debug_println!("Print to wait until voltage is ready!");
+        }
+
+        self.mmc_ios.clock = self
+        .hardware
+        .sdmmc_config_timing(MmcTiming::CardSetup)?;
+
+        for _ in 0..10 {
+            debug_println!("Wait for clock to stable!");
+        }
+
+        for _ in 0..100 {
+            signal = self.hardware.sdmmc_read_datalanes()?;
+            sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
+            if signal & 0xF == 0xF {
+                break;
+            }
+        }
+
+        if signal & 0xF != 0xF {
+            return Err(SdmmcHalError::EUNSUPPORTEDCARD);
+        }
+        
+        Ok(())
+    }
+
     fn tune_sdcard_performance(
         &mut self,
         memory_and_invalidate_cache_fn: Option<(&mut [u8; 64], fn())>
@@ -871,23 +957,19 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                     // Set up the correct clock frequency
                     self.mmc_ios.clock = self
                     .hardware
-                    .sdmmc_config_clock(sdcard.card_state.timing.frequency())?;
+                    .sdmmc_config_timing(sdcard.card_state.timing)?;
 
                     self.process_sampling(memory_addr, cache_invalidate_function)?;
-
-
                     // TODO: Add support for UHS I here
                 }
             } else {
                 // Set the card speed back to legacy
                 self.mmc_ios.clock = self
                 .hardware
-                .sdmmc_config_clock(sdcard.card_state.timing.frequency())?;
+                .sdmmc_config_timing(sdcard.card_state.timing)?;
             }
 
             debug_println!("Current frequency: {}Hz", self.mmc_ios.clock);
-
-            self.hardware.sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
 
             Ok(())
         } else {

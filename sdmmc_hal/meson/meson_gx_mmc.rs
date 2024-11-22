@@ -3,8 +3,7 @@ use core::ptr;
 use sdmmc_protocol::sdmmc::{
     mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
-        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_INTERRUPT_END_OF_CHAIN, MMC_INTERRUPT_ERROR,
-        MMC_INTERRUPT_SDIO, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS,
+        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_INTERRUPT_END_OF_CHAIN, MMC_INTERRUPT_ERROR, MMC_INTERRUPT_SDIO, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS
     },
     HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
     SdmmcHalError, SdmmcHardware,
@@ -56,7 +55,7 @@ const SD_EMMC_ADJ_ENABLE: u32 = 0x2000;
 const SD_EMMC_CLKSRC_24M: u32 = 24000000; // 24 MHz
 const SD_EMMC_CLKSRC_DIV2: u32 = 1000000000; // 1 GHz
 const MESON_MIN_FREQUENCY: u32 = div_round_up!(SD_EMMC_CLKSRC_24M, CLK_MAX_DIV);
-const MESON_MAX_FREQUENCY: u64 = 200000000; // 200 Mhz
+const MESON_MAX_FREQUENCY: u32 = 200000000; // 200 Mhz
 const CLK_MAX_DIV: u32 = 63;
 const CLK_SRC_MASK: u32 = 0b11000000;
 const CLK_SRC_24M: u32 = 0 << 6;
@@ -73,6 +72,7 @@ pub const CFG_BUS_WIDTH_MASK: u32 = 0b11;
 pub const CFG_BUS_WIDTH_1: u32 = 0;
 pub const CFG_BUS_WIDTH_4: u32 = 1;
 pub const CFG_BUS_WIDTH_8: u32 = 2;
+pub const CFG_DDR_MODE: u32 = 1 << 2;
 pub const CFG_BL_LEN_MASK: u32 = 0b1111 << 4;
 pub const CFG_BL_LEN_SHIFT: u32 = 4;
 pub const CFG_BL_LEN_512: u32 = 0b1001 << 4;
@@ -82,6 +82,7 @@ pub const CFG_RC_CC_MASK: u32 = 0b1111 << 12;
 pub const CFG_RC_CC_16: u32 = 0b0100 << 12;
 pub const CFG_RC_CC_256: u32 = 0b1000 << 12;
 pub const CFG_SDCLK_ALWAYS_ON: u32 = 1 << 18;
+pub const CFG_STOP_CLOCK: u32 = 1 << 22;
 pub const CFG_AUTO_CLK: u32 = 1 << 23;
 pub const CFG_ERR_ABORT: u32 = 1 << 27;
 
@@ -116,7 +117,8 @@ const STATUS_DESC_TIMEOUT: u32 = 1 << 12; // BIT(12)
 const STATUS_END_OF_CHAIN: u32 = 1 << 13; // BIT(13)
 const STATUS_BUSY: u32 = 1 << 31;
 const STATUS_DESC_BUSY: u32 = 1 << 30;
-const STATUS_DATI: u32 = 0xFF << 16; // Equivalent to GENMASK(23, 16)
+const STATUS_DAT_MASK: u32 = 0xFF << 16; // Equivalent to GENMASK(23, 16)
+const STATUS_DAT_SHIFT: u32 = 16;
 
 // IRQ enable register masks and flags
 const IRQ_RXD_ERR_MASK: u32 = 0xFF; // Equivalent to GENMASK(7, 0)
@@ -238,7 +240,9 @@ impl SdmmcMesonHardware {
         SdmmcMesonHardware {
             register,
             delay: None,
-            timing: MmcTiming::CardSetup,
+            // Default uboot speed class
+            timing: MmcTiming::SdHs,
+            // Wrong value but should not have much impact
             frequency: MESON_MIN_FREQUENCY,
         }
     }
@@ -274,7 +278,7 @@ impl SdmmcMesonHardware {
         }
 
         // Set clock to a low freq
-        if self.sdmmc_config_clock(MESON_MIN_FREQUENCY as u64).is_err() {
+        if self.sdmmc_config_timing(MmcTiming::CardSetup).is_err() {
             panic!("Fatal fault in setting frequency when resetting");
         }
 
@@ -375,22 +379,52 @@ impl SdmmcMesonHardware {
     /// The result that such function exists instead of using generic frequency is that different
     /// hosts may have preferred frequency for speed classes. For example, in meson, the frequency for
     /// UhsSdr104 would be 200Mhz instead of 208Mhz
-    fn meson_frequency(timing: MmcTiming) -> u64 {
-        match timing {
+    fn meson_frequency(timing: MmcTiming) -> Result<u32, SdmmcHalError> {
+        let freq: u32 = match timing {
             MmcTiming::Legacy => 25000000,
             MmcTiming::MmcHs => 26000000,
             MmcTiming::SdHs => 50000000,
             MmcTiming::UhsSdr12 => 25000000,
             MmcTiming::UhsSdr25 => 50000000,
             MmcTiming::UhsSdr50 => 100000000,
-            MmcTiming::UhsSdr104 => 200000000,
+            MmcTiming::UhsSdr104 => MESON_MAX_FREQUENCY,
             MmcTiming::UhsDdr50 => 50000000,
             MmcTiming::MmcDdr52 => 52000000,
-            MmcTiming::MmcHs200 => 200000000,
-            MmcTiming::MmcHs400 => 200000000,
-            MmcTiming::SdExp => 985000000,
-            MmcTiming::SdExp12V => 985000000,
-            MmcTiming::CardSetup => 400000, // Typical low frequency for card initialization
+            MmcTiming::MmcHs200 => MESON_MAX_FREQUENCY,
+            MmcTiming::MmcHs400 => MESON_MAX_FREQUENCY,
+            // Typical low frequency for card initialization
+            MmcTiming::CardSetup => MESON_MIN_FREQUENCY,
+            MmcTiming::CardSleep => MESON_MIN_FREQUENCY,
+            _ => {
+                return Err(SdmmcHalError::EINVAL);
+            }
+        };
+        Ok(freq)
+    }
+
+    fn meson_stop_clock(&mut self, stop: bool) {
+        unsafe {
+            // Read the current configuration register value
+            let mut meson_mmc_cfg: u32 = ptr::read_volatile(&self.register.cfg);
+    
+            // Update the CFG_STOP_CLOCK bit based on the `stop` parameter
+            meson_mmc_cfg = (meson_mmc_cfg & !CFG_STOP_CLOCK) | ((stop as u32) * CFG_STOP_CLOCK);
+    
+            // Write the updated value back to the configuration register
+            ptr::write_volatile(&mut self.register.cfg, meson_mmc_cfg);
+        }
+    }
+
+    fn meson_enable_ddr(&mut self, enable: bool) {
+        unsafe {
+            // Read the current configuration register value
+            let mut meson_mmc_cfg: u32 = ptr::read_volatile(&self.register.cfg);
+    
+            // Update the CFG_DDR_MODE bit based on the `enable` parameter
+            meson_mmc_cfg = (meson_mmc_cfg & !CFG_DDR_MODE) | ((enable as u32) * CFG_DDR_MODE);
+    
+            // Write the updated value back to the configuration register
+            ptr::write_volatile(&mut self.register.cfg, meson_mmc_cfg);
         }
     }
 }
@@ -400,6 +434,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         let cap: u128 = MMC_TIMING_LEGACY
             | MMC_TIMING_SD_HS
             | MMC_TIMING_UHS
+            | MMC_CAP_VOLTAGE_TUNE
             | MMC_CAP_4_BIT_DATA
             | MMC_CAP_CMD23;
 
@@ -422,7 +457,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         };
 
         let info: HostInfo = HostInfo {
-            max_frequency: MESON_MAX_FREQUENCY,
+            max_frequency: MESON_MAX_FREQUENCY as u64,
             min_frequency: MESON_MIN_FREQUENCY as u64,
             max_block_per_req: MAX_BLOCK_PER_TRANSFER,
             irq_capability: MMC_INTERRUPT_END_OF_CHAIN | MMC_INTERRUPT_ERROR | MMC_INTERRUPT_SDIO,
@@ -495,8 +530,26 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(())
     }
 
-    fn sdmmc_config_clock(&mut self, freq: u64) -> Result<u64, SdmmcHalError> {
-        if freq > MESON_MAX_FREQUENCY || freq < MESON_MIN_FREQUENCY as u64 {
+    fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcHalError> {
+        // Why calling this function if the timing does not change?
+        if self.timing == timing {
+            return Ok(self.frequency as u64);
+        }
+
+        if timing == MmcTiming::ClockStop {
+            // Disable the clock completely
+            self.meson_stop_clock(true);
+
+            // Change the timing
+            self.timing = timing;
+            self.frequency = 0;
+
+            return Ok(0);
+        }
+
+        let freq: u32 = Self::meson_frequency(timing)?;
+
+        if freq > MESON_MAX_FREQUENCY || freq < MESON_MIN_FREQUENCY {
             return Err(SdmmcHalError::EINVAL);
         }
         // #define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
@@ -536,7 +589,26 @@ impl SdmmcHardware for SdmmcMesonHardware {
             ptr::write_volatile(&mut self.register.clock, meson_mmc_clk);
         }
 
-        Ok((clk / clk_div) as u64)
+        // If pervious timing is clock stop, renable the clock here
+        if self.timing == MmcTiming::ClockStop {
+            self.meson_stop_clock(false);
+        }
+
+        // If the pervious timing mode is using ddr, then disable ddr
+        if self.timing == MmcTiming::UhsDdr50 || self.timing == MmcTiming::MmcDdr52 {
+            self.meson_enable_ddr(false);
+        }
+
+        // If the next timing mode is using ddr, enable ddr
+        if timing == MmcTiming::UhsDdr50 || timing == MmcTiming::MmcDdr52 {
+            self.meson_enable_ddr(true);
+        }
+        
+        // Update timing
+        self.timing = timing;
+        self.frequency = clk / clk_div;
+
+        Ok(self.frequency as u64)
     }
 
     fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcHalError> {
@@ -553,6 +625,16 @@ impl SdmmcHardware for SdmmcMesonHardware {
             ptr::write_volatile(&mut self.register.cfg, meson_mmc_cfg);
         }
         Ok(())
+    }
+
+    fn sdmmc_read_datalanes(&self) -> Result<u8, SdmmcHalError> {
+        unsafe {
+            // Read the status register
+            let status = ptr::read_volatile(&self.register.status);
+    
+            // Extract and return the DAT signal state
+            Ok(((status & STATUS_DAT_MASK) >> STATUS_DAT_SHIFT) as u8)
+        }
     }
 
     fn sdmmc_send_command(

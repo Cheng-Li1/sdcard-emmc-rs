@@ -33,6 +33,8 @@ pub enum MmcTiming {
     SdExp = 11,
     SdExp12V = 12,
     CardSetup = 13, // Additional frequency for card setup
+    CardSleep = 14,
+    ClockStop = 15, 
 }
 
 impl MmcTiming {
@@ -51,7 +53,9 @@ impl MmcTiming {
             MmcTiming::MmcHs400 => 200000000,
             MmcTiming::SdExp => 985000000, // Example frequency, adjust as needed
             MmcTiming::SdExp12V => 985000000, // Example frequency, adjust as needed
-            MmcTiming::CardSetup => 400000, // Typical low frequency for card initialization
+            MmcTiming::CardSetup => 400000,
+            MmcTiming::CardSleep => 400000,
+            MmcTiming::ClockStop => 0, // Typical low frequency for card initialization
         }
     }
 }
