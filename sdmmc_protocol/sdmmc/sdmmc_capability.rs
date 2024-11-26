@@ -35,6 +35,33 @@ bitflags! {
     }
 }
 
+pub(crate) struct SdcardCapability(pub u128);
+
+bitflags! {
+    /// Represents the host capabilities for SD/MMC controllers
+    impl SdcardCapability: u128 {
+        // Timing modes
+        const MMC_TIMING_LEGACY       = MMC_TIMING_LEGACY;
+        const MMC_TIMING_MMC_HS       = MMC_TIMING_MMC_HS;
+        const MMC_TIMING_SD_HS        = MMC_TIMING_SD_HS;
+        const MMC_TIMING_UHS_SDR12    = MMC_TIMING_UHS_SDR12;
+        const MMC_TIMING_UHS_SDR25    = MMC_TIMING_UHS_SDR25;
+        const MMC_TIMING_UHS_SDR50    = MMC_TIMING_UHS_SDR50;
+        const MMC_TIMING_UHS_SDR104   = MMC_TIMING_UHS_SDR104;
+        const MMC_TIMING_UHS_DDR50    = MMC_TIMING_UHS_DDR50;
+        const MMC_TIMING_SD_EXP       = MMC_TIMING_SD_EXP;
+        const MMC_TIMING_SD_EXP_1_2V  = MMC_TIMING_SD_EXP_1_2V;
+
+        // Capabilities
+        const MMC_CAP_4_BIT_DATA      = MMC_CAP_4_BIT_DATA;
+
+        const MMC_CAP_CMD23           = MMC_CAP_CMD23;
+        const MMC_CAP_AUTO_STOP       = MMC_CAP_AUTO_STOP;
+    }
+}
+
+pub const MMC_EMPTY_CAP: u128 = 1;
+
 // Timing modes (starting from bit 0)
 pub const MMC_TIMING_LEGACY: u128 = 1 << 0;
 pub const MMC_TIMING_MMC_HS: u128 = 1 << 1;

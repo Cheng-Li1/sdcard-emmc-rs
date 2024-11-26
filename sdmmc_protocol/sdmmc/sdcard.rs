@@ -1,6 +1,6 @@
 use core::fmt::{self, Write};
 
-use super::mmc_struct::{self, MmcState};
+use super::{mmc_struct::{self, MmcState}, sdmmc_capability::SdcardCapability, SdmmcHardware, SdmmcProtocol};
 
 pub(crate) struct Sdcard {
     pub card_id: u128,
@@ -9,6 +9,7 @@ pub(crate) struct Sdcard {
     pub card_version: SdVersion,
     pub relative_card_addr: u16,
     pub card_state: MmcState,
+    pub card_cap: SdcardCapability, 
     pub card_config: Option<Scr>,
 }
 

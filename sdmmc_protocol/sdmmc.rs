@@ -10,16 +10,14 @@ use bitflags::Flags;
 use mmc_struct::{MmcBusWidth, MmcDevice, MmcState, MmcTiming, TuningState};
 use sdcard::{Cid, Csd, Sdcard};
 use sdmmc_capability::{
-    SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_SD_HS,
-    MMC_TIMING_UHS_SDR12,
+    SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_EMPTY_CAP, MMC_TIMING_SD_HS, MMC_TIMING_UHS_SDR12, MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50
 };
 use sdmmc_constant::{
-    INIT_CLOCK_RATE, MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE,
-    MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD,
-    MMC_CMD_SEND_TUNING_BLOCK, MMC_CMD_SET_BLOCKLEN, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_SWITCH,
-    MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_165_195, MMC_VDD_32_33,
+    MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE,
+    MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_STOP_TRANSMISSION,
+    MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_32_33,
     MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH,
-    SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V,
+    SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V, SD_SWITCH_FUNCTION_GROUP_ONE, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50,
 };
 use sel4_microkit::{debug_print, debug_println};
 
@@ -497,7 +495,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             Ok(())
         } else {
             // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
-            debug_println!("Are you here on checking voltage?");
+            debug_println!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!");
             Err(SdmmcHalError::EUNSUPPORTEDCARD)
         }
     }
@@ -651,6 +649,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             card_version,
             relative_card_addr: rca,
             card_state,
+            card_cap: sdmmc_capability::SdcardCapability(MMC_EMPTY_CAP),
             card_config: None,
         })
     }
@@ -878,8 +877,58 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
     /// Implement this sdcard switch function to avoid this hackiness!
     /// Like first get the speed classes the sdcard support by this function
     /// and then switch to the proper speed class!
-    fn sdcard_switch_function(&mut self) {
-        todo!()
+    fn sdcard_switch_speed(&mut self, target: Option<MmcTiming>, memory: &mut [u8; 64], invalidate_cache_fn: fn()) -> Result<(), SdmmcHalError> {
+        // Remember to move sdcard back!
+        if let Some(MmcDevice::Sdcard(mut sdcard)) = self.mmc_device.take() {
+            let data: MmcData = MmcData {
+                blocksize: 64,
+                blockcnt: 1,
+                flags: MmcDataFlag::SdmmcDataRead,
+                addr: memory.as_ptr() as u64,
+            };
+    
+            let mut resp: [u32; 4] = [0; 4];
+    
+            match target {
+                Some(target) => Ok(()),
+                None => {
+                    let cmd = SdmmcCmd {
+                        cmdidx: SD_CMD_SWITCH_FUNC,
+                        resp_type: MMC_RSP_R1,
+                        cmdarg: 0x00FFFFFF,
+                    };
+                    Self::send_cmd_and_receive_resp(
+                        &mut self.hardware,
+                        &cmd,
+                        Some(&data),
+                        &mut resp,
+                    )?;
+                    invalidate_cache_fn();
+                    // Typical speed class supported: 80 03
+                    match self.mmc_ios.signal_voltage {
+                        MmcSignalVoltage::Voltage330 => todo!(),
+                        MmcSignalVoltage::Voltage180 => {
+                            let speed_class_byte: u8 = memory[SD_SWITCH_FUNCTION_GROUP_ONE];
+                            if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12 != 0 {
+                                sdcard.card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR12));
+                            }
+                            if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25 != 0 {
+                                sdcard.card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR25));
+                            }
+                            if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50 != 0 {
+                                sdcard.card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR50));
+                            }
+                            // continue writing here tomorrow
+                        },
+                        // For sdcard, the signal voltage cannot be 1.2V
+                        MmcSignalVoltage::Voltage120 => return Err(SdmmcHalError::EUNDEFINED),
+                    }
+                    Ok(())
+                },
+            }
+        } else {
+            Err(SdmmcHalError::EUNDEFINED)
+        }
     }
 
     fn tune_sdcard_performance(
@@ -990,7 +1039,6 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                         .sdmmc_config_timing(sdcard.card_state.timing)?;
 
                     self.process_sampling(memory_addr, cache_invalidate_function)?;
-                    // TODO: Add support for UHS I here
                 }
             } else {
                 // Set the card speed back to legacy
