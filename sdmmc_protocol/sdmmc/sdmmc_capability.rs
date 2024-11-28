@@ -60,7 +60,7 @@ bitflags! {
     }
 }
 
-pub const MMC_EMPTY_CAP: u128 = 1;
+pub const MMC_EMPTY_CAP: u128 = 0;
 
 // Timing modes (starting from bit 0)
 pub const MMC_TIMING_LEGACY: u128 = 1 << 0;
