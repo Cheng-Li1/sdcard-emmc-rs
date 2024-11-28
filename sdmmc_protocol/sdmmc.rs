@@ -548,9 +548,12 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // Change this when we decide to support spi or SDSC as well
             cmd.cmdarg |= (MMC_VDD_33_34 | MMC_VDD_32_33) & 0xff8000;
 
-            if self.host_capability.contains(sdmmc_capability::SdmmcHostCapability(
-                MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
-            )) {
+            if self
+                .host_capability
+                .contains(sdmmc_capability::SdmmcHostCapability(
+                    MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
+                ))
+            {
                 cmd.cmdarg |= OCR_S18R;
                 // cmd.cmdarg |= MMC_VDD_165_195;
             }
@@ -572,9 +575,12 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         // TODO: Add check here to return error when enocounter SDSC card
-        if self.host_capability.contains(sdmmc_capability::SdmmcHostCapability(
-            MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
-        )) {
+        if self
+            .host_capability
+            .contains(sdmmc_capability::SdmmcHostCapability(
+                MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
+            ))
+        {
             self.tune_sdcard_switch_uhs18v()?;
             self.mmc_ios.signal_voltage = MmcSignalVoltage::Voltage180;
         }
@@ -1158,98 +1164,6 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         Ok(())
-
-        /*
-        if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
-            // Tuning timing
-            sdcard.card_state.timing = MmcTiming::Legacy;
-
-            if let Some((memory, cache_invalidate_function)) = memory_and_invalidate_cache_fn {
-                if self.cap.contains(SdmmcHostCapability(MMC_TIMING_SD_HS)) {
-                    let memory_addr = memory.as_ptr() as u64;
-                    /*
-                    How cmdarg for SD_CMD_SWITCH_FUNC is calculated
-                    // mode << 31: Places the mode (0 or 1) in the highest bit (bit 31) of cmdarg.
-                    // 0xFFFFFF: Sets bits 0-23 to 1, so each function group initially has 0xF (binary 1111), which means “no change” for each function group.
-                    let cmdarg: u32 = (1 << 31) | 0xFFFFFF;
-                    // group * 4: Shifts the 4-bit mask to the position of the specified function group.
-                    // ~(0xF << (group * 4)): Clears the 4 bits for the target group by masking them to 0.
-                    // If group = 1 (bus speed mode), then group * 4 = 4. The expression clears bits 4-7, leaving all other bits unaffected.
-                    // Clear bits for the bus speed mode group (group 1)
-                    cmd.cmdarg &= ~(0xF << (1 * 4));
-                    // Set value 1 (high-speed mode) for the bus speed mode group
-                    cmd.cmdarg |= 1 << (1 * 4);
-                    */
-
-                    // TODO: send SD_CMD_SWITCH_FUNC checking to get the speed class supported first before actually switch the speed class
-                    let data = MmcData {
-                        blocksize: 64,
-                        blockcnt: 1,
-                        flags: MmcDataFlag::SdmmcDataRead,
-                        addr: memory_addr,
-                    };
-
-                    // cmdarg for switching to
-                    /*
-                    #define UHS_SDR12_BUS_SPEED	0
-                    #define HIGH_SPEED_BUS_SPEED	1
-                    #define UHS_SDR25_BUS_SPEED	1
-                    #define UHS_SDR50_BUS_SPEED	2
-                    #define UHS_SDR104_BUS_SPEED	3
-                    #define UHS_DDR50_BUS_SPEED	4
-                    */
-                    // TODO: cmdarg should not be hardcoded!
-                    let cmd = SdmmcCmd {
-                        cmdidx: SD_CMD_SWITCH_FUNC,
-                        resp_type: MMC_RSP_R1,
-                        cmdarg: 0x80FFFF03,
-                    };
-                    Self::send_cmd_and_receive_resp(
-                        &mut self.hardware,
-                        &cmd,
-                        Some(&data),
-                        &mut resp,
-                    )?;
-
-                    cache_invalidate_function();
-
-                    sel4_microkit::debug_println!("Tuning speed card response: {:08x}, memory addr data will be written to 0x{:x}", resp[0], memory_addr);
-
-                    // Check if resp has any error
-                    // TODO: I should have a function that parse R1 command specifically
-                    if (resp[0] & 0x80) == 0 {
-                        // Bit 7 set - function switch error
-                        // If that bit is not set, continue
-                        // Parse the data in memory: *mut [u8; 64] here to determine if the switch cmd succeed or not
-                        // Check if high-speed mode was enabled by the switch command
-                        // TODO: Double check here about the timing switch success, I am not sure if I am doing here is right or not
-                        if (memory[16] as u8 & 0x1) != 0 {
-                            // TODO: This should not be hardcoded!
-                            sdcard.card_state.timing = MmcTiming::UhsSdr104;
-                            sel4_microkit::debug_println!("Tuning speed card succeed!");
-                        }
-                    }
-
-                    // Set up the correct clock frequency
-                    self.mmc_ios.clock = self
-                        .hardware
-                        .sdmmc_config_timing(sdcard.card_state.timing)?;
-
-                    self.process_sampling(memory_addr, cache_invalidate_function)?;
-                }
-            } else {
-                // Set the card speed back to legacy
-                self.mmc_ios.clock = self
-                    .hardware
-                    .sdmmc_config_timing(sdcard.card_state.timing)?;
-            }
-
-            debug_println!("Current frequency: {}Hz", self.mmc_ios.clock);
-
-            Ok(())
-        } else {
-            return Err(SdmmcHalError::EUNDEFINED);
-        }*/
     }
 
     pub fn enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {
