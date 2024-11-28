@@ -34,7 +34,7 @@ bitflags! {
         const MMC_CAP_AUTO_STOP       = MMC_CAP_AUTO_STOP;
     }
 }
-
+#[derive(Debug, Clone)]
 pub(crate) struct SdcardCapability(pub u128);
 
 bitflags! {

@@ -11,8 +11,8 @@ use mmc_struct::{MmcBusWidth, MmcDevice, MmcState, MmcTiming, TuningState};
 use sdcard::{Cid, Csd, Sdcard};
 use sdmmc_capability::{
     SdcardCapability, SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_EMPTY_CAP,
-    MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50, MMC_TIMING_UHS_SDR104, MMC_TIMING_UHS_SDR12,
-    MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50,
+    MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50, MMC_TIMING_UHS_SDR104,
+    MMC_TIMING_UHS_SDR12, MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50,
 };
 use sdmmc_constant::{
     MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK,
@@ -425,7 +425,7 @@ pub struct SdmmcProtocol<T: SdmmcHardware> {
 
     host_info: HostInfo,
 
-    cap: SdmmcHostCapability,
+    host_capability: SdmmcHostCapability,
 
     /// This mmc device is optional because there may not always be a card in the slot!
     mmc_device: Option<MmcDevice>,
@@ -441,7 +441,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             hardware,
             mmc_ios: ios,
             host_info: info,
-            cap: SdmmcHostCapability(cap),
+            host_capability: SdmmcHostCapability(cap),
             mmc_device: None,
         })
     }
@@ -548,7 +548,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // Change this when we decide to support spi or SDSC as well
             cmd.cmdarg |= (MMC_VDD_33_34 | MMC_VDD_32_33) & 0xff8000;
 
-            if self.cap.contains(sdmmc_capability::SdmmcHostCapability(
+            if self.host_capability.contains(sdmmc_capability::SdmmcHostCapability(
                 MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
             )) {
                 cmd.cmdarg |= OCR_S18R;
@@ -572,7 +572,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         // TODO: Add check here to return error when enocounter SDSC card
-        if self.cap.contains(sdmmc_capability::SdmmcHostCapability(
+        if self.host_capability.contains(sdmmc_capability::SdmmcHostCapability(
             MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
         )) {
             self.tune_sdcard_switch_uhs18v()?;
@@ -889,7 +889,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
     /// and then switch to the proper speed class!
     fn sdcard_switch_speed(
         &mut self,
-        target: Option<MmcTiming>,
+        target: MmcTiming,
         memory: &mut [u8; 64],
         invalidate_cache_fn: fn(),
     ) -> Result<(), SdmmcHalError> {
@@ -902,100 +902,94 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         let mut resp: [u32; 4] = [0; 4];
 
+        // As this function only change speed class,
+        let mut cmdarg: u32 = 0x80FFFFF0;
         match target {
-            Some(target) => {
-                // As this function only change speed class,
-                let mut cmdarg: u32 = 0x80FFFFF0;
-                match target {
-                    MmcTiming::Legacy => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY as u32,
-                    MmcTiming::SdHs => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_SDHS as u32,
-                    MmcTiming::UhsSdr12 => {
-                        cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12 as u32
-                    }
-                    MmcTiming::UhsSdr25 => {
-                        cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25 as u32
-                    }
-                    MmcTiming::UhsSdr50 => {
-                        cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50 as u32
-                    }
-                    MmcTiming::UhsSdr104 => {
-                        cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104 as u32
-                    }
-                    MmcTiming::UhsDdr50 => {
-                        cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_DDR50 as u32
-                    }
-                    _ => return Err(SdmmcHalError::EUNDEFINED),
-                }
-                let cmd = SdmmcCmd {
-                    cmdidx: SD_CMD_SWITCH_FUNC,
-                    resp_type: MMC_RSP_R1,
-                    cmdarg,
-                };
-                Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)?;
-                // Error handling here
-                invalidate_cache_fn();
-                // Since we are using u8 here, the endianness does matter
-                // 0xF indicate function switch error
-                // TODO: Double check here and deliberately trigger swithc error to see if the field
-                // is being set to 0xF
-                if memory[SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE] & 0xF == 0xF {
-                    return Err(SdmmcHalError::EINVAL);
-                }
-                Ok(())
-            }
-            None => {
-                let mut card_cap: SdcardCapability =
-                    sdmmc_capability::SdcardCapability(MMC_EMPTY_CAP);
-                let cmd = SdmmcCmd {
-                    cmdidx: SD_CMD_SWITCH_FUNC,
-                    resp_type: MMC_RSP_R1,
-                    cmdarg: 0x00FFFFFF,
-                };
-                Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)?;
-                invalidate_cache_fn();
-                // Typical speed class supported: 80 03
-                match self.mmc_ios.signal_voltage {
-                    MmcSignalVoltage::Voltage330 => {
-                        let speed_class_byte: u8 = memory[SD_SWITCH_FUNCTION_GROUP_ONE];
-                        if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_SDHS != 0 {
-                            card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_SD_HS));
-                        }
-                    }
-                    MmcSignalVoltage::Voltage180 => {
-                        let speed_class_byte: u8 = memory[SD_SWITCH_FUNCTION_GROUP_ONE];
-                        if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12 != 0 {
-                            card_cap
-                                .insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR12));
-                        }
-                        if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25 != 0 {
-                            card_cap
-                                .insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR25));
-                        }
-                        if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50 != 0 {
-                            card_cap
-                                .insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR50));
-                        }
-                        if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104 != 0 {
-                            card_cap
-                                .insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR104));
-                        }
-                        if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50 != 0 {
-                            card_cap
-                                .insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_DDR50));
-                        }
-                    }
-                    // For sdcard, the signal voltage cannot be 1.2V
-                    MmcSignalVoltage::Voltage120 => return Err(SdmmcHalError::EUNDEFINED),
-                }
-                // Add the card cap to self
-                if let Some(MmcDevice::Sdcard(ref mut sdcard)) = &mut self.mmc_device {
-                    sdcard.card_cap |= card_cap;
-                } else {
-                    return Err(SdmmcHalError::EINVAL);
-                }
-                Ok(())
-            }
+            MmcTiming::Legacy => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY as u32,
+            MmcTiming::SdHs => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_SDHS as u32,
+            MmcTiming::UhsSdr12 => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12 as u32,
+            MmcTiming::UhsSdr25 => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25 as u32,
+            MmcTiming::UhsSdr50 => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50 as u32,
+            MmcTiming::UhsSdr104 => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104 as u32,
+            MmcTiming::UhsDdr50 => cmdarg |= SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_DDR50 as u32,
+            _ => return Err(SdmmcHalError::EUNDEFINED),
         }
+        let cmd = SdmmcCmd {
+            cmdidx: SD_CMD_SWITCH_FUNC,
+            resp_type: MMC_RSP_R1,
+            cmdarg,
+        };
+        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)?;
+        // Error handling here
+        invalidate_cache_fn();
+        // Since we are using u8 here, the endianness does matter
+        // 0xF indicate function switch error
+        // TODO: Double check here and deliberately trigger swithc error to see if the field
+        // is being set to 0xF
+        if memory[SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE] & 0xF == 0xF {
+            return Err(SdmmcHalError::EINVAL);
+        }
+        Ok(())
+    }
+
+    fn sdcard_check_supported_speed_class(
+        &mut self,
+        memory: &mut [u8; 64],
+        invalidate_cache_fn: fn(),
+    ) -> Result<(), SdmmcHalError> {
+        let data: MmcData = MmcData {
+            blocksize: 64,
+            blockcnt: 1,
+            flags: MmcDataFlag::SdmmcDataRead,
+            addr: memory.as_ptr() as u64,
+        };
+
+        let mut resp: [u32; 4] = [0; 4];
+
+        let mut card_cap: SdcardCapability = sdmmc_capability::SdcardCapability(MMC_EMPTY_CAP);
+        let cmd = SdmmcCmd {
+            cmdidx: SD_CMD_SWITCH_FUNC,
+            resp_type: MMC_RSP_R1,
+            cmdarg: 0x00FFFFFF,
+        };
+        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)?;
+        invalidate_cache_fn();
+        // Typical speed class supported: 80 03
+        match self.mmc_ios.signal_voltage {
+            MmcSignalVoltage::Voltage330 => {
+                let speed_class_byte: u8 = memory[SD_SWITCH_FUNCTION_GROUP_ONE];
+                if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_SDHS != 0 {
+                    card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_SD_HS));
+                }
+            }
+            MmcSignalVoltage::Voltage180 => {
+                let speed_class_byte: u8 = memory[SD_SWITCH_FUNCTION_GROUP_ONE];
+                if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12 != 0 {
+                    card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR12));
+                }
+                if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25 != 0 {
+                    card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR25));
+                }
+                if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50 != 0 {
+                    card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR50));
+                }
+                if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104 != 0 {
+                    card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_SDR104));
+                }
+                if speed_class_byte & SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50 != 0 {
+                    card_cap.insert(sdmmc_capability::SdcardCapability(MMC_TIMING_UHS_DDR50));
+                }
+            }
+            // For sdcard, the signal voltage cannot be 1.2V
+            MmcSignalVoltage::Voltage120 => return Err(SdmmcHalError::EUNDEFINED),
+        }
+        // Add the card cap to self
+        if let Some(MmcDevice::Sdcard(ref mut sdcard)) = &mut self.mmc_device {
+            sdcard.card_cap |= card_cap;
+        } else {
+            return Err(SdmmcHalError::EINVAL);
+        }
+        Ok(())
     }
 
     /// Since we are using u8 here, the endianness does matter
@@ -1005,34 +999,169 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
     ) -> Result<(), SdmmcHalError> {
         let mut resp: [u32; 4] = [0; 4];
 
-        if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
-            // TODO: Try to get and parse SCR register instead of assume every card support 4 bit datalanes
-            if self.mmc_ios.bus_width == MmcBusWidth::Width1
-                && self.cap.contains(SdmmcHostCapability(MMC_CAP_4_BIT_DATA))
-            {
-                // CMD55 + ACMD6 to set the card to 4-bit mode (if supported by host and card)
-                let cmd = SdmmcCmd {
-                    cmdidx: MMC_CMD_APP_CMD,
-                    resp_type: MMC_RSP_R1,
-                    cmdarg: (sdcard.relative_card_addr as u32) << 16,
+        if self.mmc_ios.bus_width == MmcBusWidth::Width1
+            && self
+                .host_capability
+                .contains(SdmmcHostCapability(MMC_CAP_4_BIT_DATA))
+        {
+            // Switch data bits per transfer
+            let relative_card_address: u16;
+            if let Some(MmcDevice::Sdcard(ref sdcard)) = self.mmc_device {
+                relative_card_address = sdcard.relative_card_addr;
+            } else {
+                return Err(SdmmcHalError::EINVAL);
+            }
+            // CMD55 + ACMD6 to set the card to 4-bit mode (if supported by host and card)
+            let cmd = SdmmcCmd {
+                cmdidx: MMC_CMD_APP_CMD,
+                resp_type: MMC_RSP_R1,
+                cmdarg: (relative_card_address as u32) << 16,
+            };
+            Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+
+            let cmd = SdmmcCmd {
+                cmdidx: SD_CMD_APP_SET_BUS_WIDTH,
+                resp_type: MMC_RSP_R1,
+                cmdarg: 2, // Argument for 4-bit mode (0 for 1-bit mode)
+            };
+            Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+
+            self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width4)?;
+
+            sel4_microkit::debug_println!("Tuning datalanes succeed!");
+
+            // If any of the cmd above fail, the card should be completely reinit
+            self.mmc_ios.bus_width = MmcBusWidth::Width4;
+        }
+
+        if let Some((memory, cache_invalidate_function)) = memory_and_invalidate_cache_fn {
+            if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
+                match self.mmc_ios.signal_voltage {
+                    MmcSignalVoltage::Voltage330 => {
+                        sdcard.card_state.timing = MmcTiming::Legacy;
+                        if !sdcard
+                            .card_cap
+                            .contains(SdcardCapability(MMC_TIMING_LEGACY))
+                        {
+                            // When the target speed is None, the sdcard_switch_speed update sdcard speed capability
+                            self.sdcard_check_supported_speed_class(
+                                memory,
+                                cache_invalidate_function,
+                            )?;
+                        }
+                    }
+                    MmcSignalVoltage::Voltage180 => {
+                        sdcard.card_state.timing = MmcTiming::UhsSdr12;
+                        if !sdcard
+                            .card_cap
+                            .contains(SdcardCapability(MMC_TIMING_UHS_SDR12))
+                        {
+                            self.sdcard_check_supported_speed_class(
+                                memory,
+                                cache_invalidate_function,
+                            )?;
+                        }
+                    }
+                    MmcSignalVoltage::Voltage120 => return Err(SdmmcHalError::EUNDEFINED),
                 };
-                Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
-
-                let cmd = SdmmcCmd {
-                    cmdidx: SD_CMD_APP_SET_BUS_WIDTH,
-                    resp_type: MMC_RSP_R1,
-                    cmdarg: 2, // Argument for 4-bit mode (0 for 1-bit mode)
-                };
-                Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
-
-                self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width4)?;
-
-                sel4_microkit::debug_println!("Tuning datalanes succeed!");
-
-                // If any of the cmd above fail, the card should be completely reinit
-                self.mmc_ios.bus_width = MmcBusWidth::Width4;
+            } else {
+                return Err(SdmmcHalError::EUNDEFINED);
             }
 
+            let mut timing;
+            let sdcard_cap: SdcardCapability;
+            if let Some(MmcDevice::Sdcard(ref sdcard)) = self.mmc_device {
+                sdcard_cap = sdcard.card_cap.clone();
+                timing = sdcard.card_state.timing;
+                'tune_speed: {
+                    match self.mmc_ios.signal_voltage {
+                        MmcSignalVoltage::Voltage330 => {
+                            if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_SD_HS))
+                                && self
+                                    .host_capability
+                                    .contains(SdmmcHostCapability(MMC_TIMING_SD_HS))
+                            {
+                                // When the target speed is Some, the sdcard_switch_speed try to switch the speed class to target
+                                self.sdcard_switch_speed(
+                                    MmcTiming::SdHs,
+                                    memory,
+                                    cache_invalidate_function,
+                                )?;
+                                timing = MmcTiming::SdHs;
+                            }
+                        }
+                        MmcSignalVoltage::Voltage180 => {
+                            if sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_SDR104))
+                                && self
+                                    .host_capability
+                                    .contains(SdmmcHostCapability(MMC_TIMING_UHS_SDR104))
+                            {
+                                self.sdcard_switch_speed(
+                                    MmcTiming::UhsSdr104,
+                                    memory,
+                                    cache_invalidate_function,
+                                )?;
+                                timing = MmcTiming::UhsSdr104;
+                                // I want to break here!
+                                break 'tune_speed;
+                            }
+                            if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_DDR50))
+                                && self
+                                    .host_capability
+                                    .contains(SdmmcHostCapability(MMC_TIMING_UHS_DDR50))
+                            {
+                                self.sdcard_switch_speed(
+                                    MmcTiming::UhsDdr50,
+                                    memory,
+                                    cache_invalidate_function,
+                                )?;
+                                timing = MmcTiming::UhsDdr50;
+                                break 'tune_speed;
+                            }
+                            if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_SDR50))
+                                && self
+                                    .host_capability
+                                    .contains(SdmmcHostCapability(MMC_TIMING_UHS_SDR50))
+                            {
+                                self.sdcard_switch_speed(
+                                    MmcTiming::UhsSdr50,
+                                    memory,
+                                    cache_invalidate_function,
+                                )?;
+                                timing = MmcTiming::UhsSdr50;
+                                break 'tune_speed;
+                            }
+                            if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_SDR25))
+                                && self
+                                    .host_capability
+                                    .contains(SdmmcHostCapability(MMC_TIMING_UHS_SDR25))
+                            {
+                                self.sdcard_switch_speed(
+                                    MmcTiming::UhsSdr25,
+                                    memory,
+                                    cache_invalidate_function,
+                                )?;
+                                timing = MmcTiming::UhsSdr25;
+                                break 'tune_speed;
+                            }
+                        }
+                        MmcSignalVoltage::Voltage120 => return Err(SdmmcHalError::EUNDEFINED),
+                    }
+                };
+                self.mmc_ios.clock = self.hardware.sdmmc_config_timing(timing)?;
+            } else {
+                return Err(SdmmcHalError::EUNDEFINED);
+            }
+            if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
+                sdcard.card_state.timing = timing;
+            }
+        }
+
+        Ok(())
+
+        /*
+        if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
+            // Tuning timing
             sdcard.card_state.timing = MmcTiming::Legacy;
 
             if let Some((memory, cache_invalidate_function)) = memory_and_invalidate_cache_fn {
@@ -1120,7 +1249,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             Ok(())
         } else {
             return Err(SdmmcHalError::EUNDEFINED);
-        }
+        }*/
     }
 
     pub fn enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {
