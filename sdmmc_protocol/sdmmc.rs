@@ -1038,6 +1038,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
             // If any of the cmd above fail, the card should be completely reinit
             self.mmc_ios.bus_width = MmcBusWidth::Width4;
+            // TODO: Change sdcard bus width here, or get rid of that field completely
         }
 
         if let Some((memory, cache_invalidate_function)) = memory_and_invalidate_cache_fn {
@@ -1155,6 +1156,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                     }
                 };
                 self.mmc_ios.clock = self.hardware.sdmmc_config_timing(timing)?;
+                self.process_sampling(memory.as_ptr() as u64, cache_invalidate_function)?;
+
+                debug_println!("Current frequency: {}Hz", self.mmc_ios.clock);
             } else {
                 return Err(SdmmcHalError::EUNDEFINED);
             }

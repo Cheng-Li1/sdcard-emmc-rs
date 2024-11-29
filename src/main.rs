@@ -161,56 +161,61 @@ impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
         }
 
         let mut notify_virt: bool = false;
-        loop {
-            // Polling if receive any notification, it is to poll even the notification is not from the interrupt as polling is cheap
-            if let Some(request) = &mut self.request {
-                if let Some(future) = &mut self.future {
-                    let waker = create_dummy_waker();
-                    let mut cx = Context::from_waker(&waker);
-                    match future.as_mut().poll(&mut cx) {
-                        Poll::Ready((result, sdmmc)) => {
-                            // debug_println!("SDMMC_DRIVER: Future completed with result");
-                            self.future = None; // Reset the future once done
-                            self.sdmmc = Some(sdmmc);
-                            if result.is_err() {
-                                debug_println!(
-                                    "SDMMC_DRIVER: DISK ERROR ENCOUNTERED, possibly retry!"
-                                );
-                                self.retry -= 1;
-                            } else {
-                                // Deduct finished count from count
-                                request.success_count += request.count_to_do;
-                                request.count -= request.count_to_do as u16;
+
+        'process_notification: {
+            // Polling if receive interrupt notification
+            if channel.index() == INTERRUPT.index() {
+                if let Some(request) = &mut self.request {
+                    if let Some(future) = &mut self.future {
+                        let waker = create_dummy_waker();
+                        let mut cx = Context::from_waker(&waker);
+                        match future.as_mut().poll(&mut cx) {
+                            Poll::Ready((result, sdmmc)) => {
+                                // debug_println!("SDMMC_DRIVER: Future completed with result");
+                                self.future = None; // Reset the future once done
+                                self.sdmmc = Some(sdmmc);
+                                if result.is_err() {
+                                    debug_println!(
+                                        "SDMMC_DRIVER: DISK ERROR ENCOUNTERED, possibly retry!"
+                                    );
+                                    self.retry -= 1;
+                                } else {
+                                    // Deduct finished count from count
+                                    request.success_count += request.count_to_do;
+                                    request.count -= request.count_to_do as u16;
+                                }
+                                if request.count == 0 {
+                                    let resp_status = BlkStatus::BlkRespOk;
+                                    notify_virt = true;
+                                    unsafe {
+                                        blk_enqueue_resp_helper(
+                                            resp_status,
+                                            request.success_count / SDDF_TO_REAL_SECTOR,
+                                            request.id,
+                                        );
+                                    }
+                                    self.request = None;
+                                } else if self.retry == 0 {
+                                    let resp_status = BlkStatus::BlkRespSeekError;
+                                    notify_virt = true;
+                                    unsafe {
+                                        blk_enqueue_resp_helper(
+                                            resp_status,
+                                            request.success_count / SDDF_TO_REAL_SECTOR,
+                                            request.id,
+                                        );
+                                    }
+                                    self.request = None;
+                                }
                             }
-                            if request.count == 0 {
-                                let resp_status = BlkStatus::BlkRespOk;
-                                notify_virt = true;
-                                unsafe {
-                                    blk_enqueue_resp_helper(
-                                        resp_status,
-                                        request.success_count / SDDF_TO_REAL_SECTOR,
-                                        request.id,
-                                    );
-                                }
-                                self.request = None;
-                            } else if self.retry == 0 {
-                                let resp_status = BlkStatus::BlkRespSeekError;
-                                notify_virt = true;
-                                unsafe {
-                                    blk_enqueue_resp_helper(
-                                        resp_status,
-                                        request.success_count / SDDF_TO_REAL_SECTOR,
-                                        request.id,
-                                    );
-                                }
-                                self.request = None;
+                            Poll::Pending => {
+                                // debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
+                                // Since the future is not ready, no other request can be dequeued, exit the big loop
+                                break 'process_notification;
                             }
                         }
-                        Poll::Pending => {
-                            // debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
-                            // Since the future is not ready, no other request can be dequeued, exit the big loop
-                            break;
-                        }
+                    } else {
+                        panic!("SDMMC: Receive a hardware interrupt despite not having a future!");
                     }
                 }
             }
@@ -267,6 +272,7 @@ impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
                     }
                 }
             }
+
             // If future is empty
             if let Some(request) = &mut self.request {
                 if let None = self.future {
@@ -285,7 +291,7 @@ impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
                                         + request.success_count as u64 * SDCARD_SECTOR_SIZE as u64,
                                 )));
                             } else {
-                                panic!("SDMMC_DRIVER: The sdmmc should be here and the future should be empty!!!")
+                                panic!("SDMMC_DRIVER: The sdmmc should be here since the future should be empty!!!")
                             }
                         }
                         BlkOp::BlkReqWrite => {
@@ -309,12 +315,23 @@ impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
                             panic!("SDMMC_DRIVER: You should not reach here!")
                         }
                     }
+                    let waker = create_dummy_waker();
+                    let mut cx = Context::from_waker(&waker);
+                    // Poll the future once to make it start working!
+                    if let Some(ref mut future) = self.future {
+                        match future.as_mut().poll(&mut cx) {
+                            Poll::Ready(_) => {
+                                panic!("SDMMC: The newly created future returned immediately! 
+                                        Most likely the future contain an invalid request! 
+                                        Double check request sanitize process!")
+                            }
+                            Poll::Pending => break 'process_notification,
+                        }
+                    }
                 }
-            } else {
-                // If Request is empty, means there are no future available, so we do not need to poll again
-                break;
             }
         }
+
         if notify_virt == true {
             // debug_println!("SDMMC_DRIVER: Notify the BLK_VIRTUALIZER!");
             BLK_VIRTUALIZER.notify();
