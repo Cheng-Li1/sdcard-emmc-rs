@@ -15,19 +15,7 @@ use sdmmc_capability::{
     MMC_TIMING_UHS_SDR12, MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50,
 };
 use sdmmc_constant::{
-    MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK,
-    MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_STOP_TRANSMISSION,
-    MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_32_33, MMC_VDD_33_34,
-    OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH,
-    SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V,
-    SD_SWITCH_FUNCTION_GROUP_ONE, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_LEGACY,
-    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50,
-    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12,
-    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50,
-    SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY, SD_SWITCH_FUNCTION_GROUP_ONE_SET_SDHS,
-    SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104,
-    SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25,
-    SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50, SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE,
+    MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V, SD_SWITCH_FUNCTION_GROUP_ONE, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_LEGACY, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY, SD_SWITCH_FUNCTION_GROUP_ONE_SET_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50, SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE
 };
 use sel4_microkit::{debug_print, debug_println};
 
@@ -521,6 +509,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         let mut resp: [u32; 4] = [0; 4];
         // Uboot define this value to be 1000...
         let mut timeout: u16 = 1000;
+
         loop {
             debug_println!("Sending SD_CMD_APP_SEND_OP_COND!");
             // Prepare CMD55 (APP_CMD)
@@ -536,7 +525,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmd = SdmmcCmd {
                 cmdidx: SD_CMD_APP_SEND_OP_COND,
                 resp_type: MMC_RSP_R3,
-                cmdarg: 1,
+                cmdarg: 0,
             };
 
             // Set the HCS bit if version is SD Version 2
@@ -546,7 +535,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // TODO: Right now the operating voltage is hardcoded, could this have unintended behavior for legacy device
             // And maybe change this when we are trying to support UHS I
             // Change this when we decide to support spi or SDSC as well
-            cmd.cmdarg |= (MMC_VDD_33_34 | MMC_VDD_32_33) & 0xff8000;
+            cmd.cmdarg |= (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32) & 0xff8000;
 
             if self
                 .host_capability
@@ -845,6 +834,10 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
 
+        for _ in 0..100 {
+            debug_println!("Wait for clock to stable!");
+        }
+
         let mut signal: u8 = 0xFF;
 
         for _ in 0..100 {
@@ -868,7 +861,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
-        for _ in 0..10 {
+        for _ in 0..100 {
             debug_println!("Wait for clock to stable!");
         }
 
@@ -1083,7 +1076,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 'tune_speed: {
                     match self.mmc_ios.signal_voltage {
                         MmcSignalVoltage::Voltage330 => {
-                            if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_SD_HS))
+                            if sdcard_cap.contains(SdcardCapability(MMC_TIMING_SD_HS))
                                 && self
                                     .host_capability
                                     .contains(SdmmcHostCapability(MMC_TIMING_SD_HS))
