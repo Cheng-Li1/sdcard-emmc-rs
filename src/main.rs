@@ -182,7 +182,7 @@ impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
                                 } else {
                                     // Deduct finished count from count
                                     request.success_count += request.count_to_do;
-                                    request.count -= request.count_to_do as u16;
+                                    request.count -= request.count_to_do;
                                 }
                                 if request.count == 0 {
                                     let resp_status = BlkStatus::BlkRespOk;
@@ -237,12 +237,13 @@ impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
                         &mut request.request_code as *mut BlkOp,
                         &mut request.io_or_offset as *mut u64,
                         &mut request.block_number as *mut u32,
-                        &mut request.count as *mut u16,
+                        &mut request.count as *mut u32,
                         &mut request.id as *mut u32,
                     );
                 }
+                // TODO: Consider how to add integer overflow check here
                 request.block_number = request.block_number * SDDF_TO_REAL_SECTOR;
-                request.count = request.count * SDDF_TO_REAL_SECTOR as u16;
+                request.count = request.count * SDDF_TO_REAL_SECTOR;
                 // Print the retrieved values
                 /*
                 debug_println!("io_or_offset: 0x{:x}", request.io_or_offset);// Simple u64
