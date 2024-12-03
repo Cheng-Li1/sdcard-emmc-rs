@@ -552,12 +552,13 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
             // Check if card is ready (OCR_BUSY bit)
             if (resp[0] & OCR_BUSY) != 0 {
+                debug_println!("OCR: {:08x}", resp[0]);
                 break;
             }
 
             // Timeout handling
             if timeout <= 0 {
-                debug_println!("Are you here in SD_CMD_APP_SEND_OP_COND?");
+                debug_println!("SDMMC: Setting voltage failed, card not supported!");
                 return Err(SdmmcHalError::EUNSUPPORTEDCARD);
             }
             timeout -= 1;
@@ -834,7 +835,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
 
-        for _ in 0..100 {
+        for _ in 0..10 {
             debug_println!("Wait for clock to stable!");
         }
 
@@ -861,7 +862,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
-        for _ in 0..100 {
+        for _ in 0..10 {
             debug_println!("Wait for clock to stable!");
         }
 
