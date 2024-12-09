@@ -891,6 +891,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
+            program_wait_unreliable(1000);
             sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
             if signal & 0xF == 0xF {
                 break;
