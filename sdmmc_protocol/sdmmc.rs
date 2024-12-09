@@ -485,7 +485,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // Check the sdcard soecification to see if this delay is indeed needed
         debug_println!("Add some delay here!");
 
-        program_wait_unreliable(10000);
+        // TODO: figuring out the optimal delay
+        program_wait_unreliable(10000000);
 
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
@@ -854,13 +855,14 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             debug_println!("Wait for clock to stable!");
         }
         */
-
+        // TODO: figuring out the optimal delay
         program_wait_unreliable(100000);
 
         let mut signal: u8 = 0xFF;
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
+            // TODO: figuring out the optimal delay
             program_wait_unreliable(100000);
             sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
             if signal & 0xF == 0x0 {
@@ -878,7 +880,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         /* for _ in 0..100 {
             debug_println!("Print to wait until voltage is ready!");
         }*/
-
+        // TODO: figuring out the optimal delay
         program_wait_unreliable(10000000);
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
@@ -886,11 +888,12 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         /* for _ in 0..10 {
             debug_println!("Wait for clock to stable!");
         }*/
-
+        // TODO: figuring out the optimal delay
         program_wait_unreliable(100000);
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
+            // TODO: figuring out the optimal delay
             program_wait_unreliable(100000);
             sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
             if signal & 0xF == 0xF {
