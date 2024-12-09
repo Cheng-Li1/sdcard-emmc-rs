@@ -405,6 +405,16 @@ pub trait SdmmcHardware {
     }
 }
 
+#[cfg(feature = "sel4-microkit")] 
+use sel4_microkit_support::program_wait_unreliable;
+
+#[cfg(not(feature = "sel4-microkit"))]
+fn program_wait_unreliable(time_ns: u64) {
+    for _ in 0..time_ns {
+        hint::spin_loop(); // Use spin loop hint to reduce contention during the wait
+    }
+}
+
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
 pub struct SdmmcProtocol<T: SdmmcHardware> {
     pub hardware: T,
@@ -475,6 +485,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // Check the sdcard soecification to see if this delay is indeed needed
         debug_println!("Add some delay here!");
 
+        program_wait_unreliable(10000);
+
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
             resp_type: MMC_RSP_R7,
@@ -532,7 +544,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // since the flow has reached here, the card would be at least SD Version 2
             cmd.cmdarg |= OCR_HCS;
 
-            // TODO: Right now the operating voltage is hardcoded, could this have unintended behavior for legacy device
+            // TODO: Right now the operating voltage is hardcoded, it should be changed to be provided by the hal!
             // And maybe change this when we are trying to support UHS I
             // Change this when we decide to support spi or SDSC as well
             cmd.cmdarg |= (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32) & 0xff8000;
@@ -550,9 +562,10 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // Send ACMD41
             Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
 
+            debug_println!("OCR: {:08x}", resp[0]);
+
             // Check if card is ready (OCR_BUSY bit)
             if (resp[0] & OCR_BUSY) != 0 {
-                debug_println!("OCR: {:08x}", resp[0]);
                 break;
             }
 
@@ -571,6 +584,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
             ))
         {
+            // TODO: If the sdcard fail at this stage, a power circle and reinit should be performed
             self.tune_sdcard_switch_uhs18v()?;
             self.mmc_ios.signal_voltage = MmcSignalVoltage::Voltage180;
         }
@@ -835,14 +849,19 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
 
+        /* 
         for _ in 0..10 {
             debug_println!("Wait for clock to stable!");
         }
+        */
+
+        program_wait_unreliable(10000);
 
         let mut signal: u8 = 0xFF;
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
+            program_wait_unreliable(1000);
             sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
             if signal & 0xF == 0x0 {
                 break;
@@ -856,15 +875,19 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         self.hardware
             .sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
 
-        for _ in 0..100 {
+        /* for _ in 0..100 {
             debug_println!("Print to wait until voltage is ready!");
-        }
+        }*/
+
+        program_wait_unreliable(10000000);
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
-        for _ in 0..10 {
+        /* for _ in 0..10 {
             debug_println!("Wait for clock to stable!");
-        }
+        }*/
+
+        program_wait_unreliable(10000);
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;

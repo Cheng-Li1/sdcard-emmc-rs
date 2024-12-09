@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "5b9ebfd0a3a9805f28cc9222cd558e8d56a3919d" }
 sdmmc_hal = { path = "sdmmc_hal/meson", features = ["sel4-microkit"] }
-sdmmc_protocol = { path = "sdmmc_protocol" }
+sdmmc_protocol = { path = "sdmmc_protocol", features = ["sel4-microkit"] }
 
 [build]
 build = "build.rs"

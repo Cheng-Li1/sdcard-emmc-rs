@@ -11,3 +11,10 @@ path = "lib.rs"
 [dependencies]
 bitflags = "2.6.0"
 sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "5b9ebfd0a3a9805f28cc9222cd558e8d56a3919d"}
+sel4-microkit-support = { path = "../optional_os_support/sel4-microkit-support", optional = true }
+
+[features]
+# Feature Flags:
+# - sel4-microkit: Enables support for the optional `sel4-microkit` crate,
+#   adding seL4-specific functionalities such as debug output and optimized sleep functions.
+sel4-microkit = ["dep:sel4-microkit-support"]
