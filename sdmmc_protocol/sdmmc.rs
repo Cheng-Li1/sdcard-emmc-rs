@@ -855,13 +855,13 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
         */
 
-        program_wait_unreliable(10000);
+        program_wait_unreliable(100000);
 
         let mut signal: u8 = 0xFF;
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
-            program_wait_unreliable(1000);
+            program_wait_unreliable(100000);
             sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
             if signal & 0xF == 0x0 {
                 break;
@@ -887,11 +887,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             debug_println!("Wait for clock to stable!");
         }*/
 
-        program_wait_unreliable(10000);
+        program_wait_unreliable(100000);
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
-            program_wait_unreliable(1000);
+            program_wait_unreliable(100000);
             sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
             if signal & 0xF == 0xF {
                 break;
