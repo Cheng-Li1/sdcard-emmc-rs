@@ -579,6 +579,8 @@ impl SdmmcHardware for SdmmcMesonHardware {
          * If CLK_CO_PHASE_270 is used, it's more stable than other.
          * Other SoCs use CLK_CO_PHASE_180 by default.
          * But Linux default to use CLK_CO_PHASE_180
+         * It is true that, without tuning, 
+         * Sdcard will not work in High speed mode on Odroid C4 if CLK_CO_PHASE_180 is used
          */
         meson_mmc_clk |= CLK_CO_PHASE_180;
         // meson_mmc_clk |= CLK_CO_PHASE_270;

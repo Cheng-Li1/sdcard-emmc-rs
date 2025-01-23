@@ -134,6 +134,7 @@ impl Csd {
             0 => SdVersion::V1_0,                             // CSD Version 1.0
             1 => SdVersion::V2_0,                             // CSD Version 2.0
             _ => panic!("Unsupported CSD structure version"), // CSD structures beyond 2.0 are not supported here
+            // Actually SDUC card are using CSD 3.0 so maybe add something here later.
         };
 
         // Parse fields based on CSD version
