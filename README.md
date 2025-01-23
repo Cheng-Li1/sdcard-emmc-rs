@@ -47,7 +47,8 @@ The driver is organized into the following components:
    - Modify this layer to add new protocol features (e.g., hotplugging or eMMC support).
 
 3. **`optional_os_support` Folder**:
-   - Provides OS-specific utilities such as optimized sleep or debugging tools.
+   - Provides OS-specific utilities such as optimized wait/sleep operations(instead of spinning waiting) or printing debug messages to the terminal.
+   - Modify this layer to provide support for a new OS
 
 ---
 
