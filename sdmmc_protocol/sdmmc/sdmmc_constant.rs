@@ -45,8 +45,16 @@ pub const SD_CMD_SWITCH_UHS18V: u32 = 11;
 
 pub const SD_CMD_APP_SET_BUS_WIDTH: u32 = 6;
 pub const SD_CMD_APP_SD_STATUS: u32 = 13;
+
 pub const SD_CMD_ERASE_WR_BLK_START: u32 = 32;
 pub const SD_CMD_ERASE_WR_BLK_END: u32 = 33;
+
+/*
+ * Erase/discard
+ */
+pub const SD_ERASE_ARG: u32 = 0x00000000;
+pub const SD_DISCARD_ARG: u32 = 0x00000001;
+
 pub const SD_CMD_APP_SEND_OP_COND: u32 = 41;
 pub const SD_CMD_APP_SEND_SCR: u32 = 51;
 
