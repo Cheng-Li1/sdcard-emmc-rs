@@ -82,9 +82,8 @@ pub const MMC_RSP_R7: u32 = MMC_RSP_PRESENT | MMC_RSP_CRC | MMC_RSP_OPCODE;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MmcPowerMode {
     Off = 0,
-    Up = 1,
-    On = 2,
-    Undefined = 3,
+    On = 1,
+    Undefined = 2,
 }
 
 // Signal voltage

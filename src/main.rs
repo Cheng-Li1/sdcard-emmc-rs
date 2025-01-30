@@ -322,9 +322,11 @@ impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
                     if let Some(ref mut future) = self.future {
                         match future.as_mut().poll(&mut cx) {
                             Poll::Ready(_) => {
-                                panic!("SDMMC: The newly created future returned immediately! 
+                                panic!(
+                                    "SDMMC: The newly created future returned immediately! 
                                         Most likely the future contain an invalid request! 
-                                        Double check request sanitize process!")
+                                        Double check request sanitize process!"
+                                )
                             }
                             Poll::Pending => break 'process_notification,
                         }

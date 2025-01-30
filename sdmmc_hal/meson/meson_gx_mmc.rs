@@ -838,4 +838,58 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(())
         */
     }
+
+
+    // Experimental function that tries to modify the pin that might control the power of the sdcard slot
+    // This function should be pretty much the same with sdmmc_set_signal_voltage, the only difference
+    // is the pin modified is gpioAO_3, a \busy wait might need to be added after setting the power
+    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<MmcPowerMode, SdmmcHalError> {
+        match power_mode {
+            MmcPowerMode::On => {
+                let mut value: u32;
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
+                }
+                value &= !(1 << 3);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
+                }
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
+                }
+                value &= !(1 << 3);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                }
+            }
+            MmcPowerMode::Off => {
+                let mut value: u32;
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
+                }
+                value &= !(1 << 3);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
+                }
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
+                }
+                value |= 1 << 3;
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                }
+            }
+            _ => return Err(SdmmcHalError::EINVAL),
+        }
+        // Disable pull-up/down for gpioAO_3
+        let mut value: u32;
+        unsafe {
+            value = ptr::read_volatile(AO_RTI_PULL_UP_EN_REG as *const u32);
+        }
+        value &= !(1 << 3); // Disable pull-up/down for gpioAO_3
+        unsafe {
+            ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
+        }
+        Ok(power_mode)
+    }
 }
