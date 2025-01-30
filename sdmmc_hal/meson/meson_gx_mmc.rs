@@ -432,6 +432,61 @@ impl SdmmcMesonHardware {
 }
 
 impl SdmmcHardware for SdmmcMesonHardware {
+    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<MmcPowerMode, SdmmcHalError> {
+        /*
+         * Power resetting introduced in: https://github.com/hardkernel/linux/commit/84628497332a5cd2154c92436ec86fad900fe0af
+         * Discussed in: https://groups.io/g/u-boot-amlogic/message/823
+         * AO_3 GPIO pin for SD Power: https://github.com/hardkernel/linux/blob/84628497332a5cd2154c92436ec86fad900fe0af/arch/arm64/boot/dts/amlogic/meson64_odroidc4.dts#L835
+         */
+        match power_mode {
+            MmcPowerMode::On => {
+                let mut value: u32;
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
+                }
+                value &= !(1 << 3);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
+                }
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
+                }
+                value |= (1 << 3);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                }
+            }
+            MmcPowerMode::Up => {
+                /* MmcPowerMode::Up means card is in the process of powering up,
+                 * setting this power mode is meaningless.
+                 */
+                return Err(SdmmcHalError::ENOTIMPLEMENTED);
+            }
+            MmcPowerMode::Off => {
+                /* Turn the card off */
+                let mut value: u32;
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
+                }
+                value &= !(1 << 3);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
+                }
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
+                }
+                value &= !(1 << 3);
+                unsafe {
+                    ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                }
+            }
+            MmcPowerMode::Undefined => {
+                return Err(SdmmcHalError::ENOTIMPLEMENTED);
+            }
+        }
+        return Ok(power_mode);
+    }
+
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcHalError> {
         let cap: u128 = MMC_TIMING_LEGACY
             | MMC_TIMING_SD_HS
