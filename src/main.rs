@@ -18,10 +18,7 @@ use sddf_blk::{
 };
 use sdmmc_hal::meson_gx_mmc::SdmmcMesonHardware;
 
-use sdmmc_protocol::sdmmc::{
-    sdmmc_capability::{MMC_INTERRUPT_END_OF_CHAIN, MMC_INTERRUPT_ERROR},
-    SdmmcHalError, SdmmcHardware, SdmmcProtocol,
-};
+use sdmmc_protocol::sdmmc::{SdmmcHalError, SdmmcHardware, SdmmcProtocol};
 use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
 const BLK_VIRTUALIZER: sel4_microkit::Channel = sel4_microkit::Channel::new(0);
@@ -98,8 +95,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
         .setup_card()
         .unwrap_or_else(|error| panic!("SDMMC: Error at setup {:?}", error));
 
-    let mut test: u32 = 0;
-    let _ = sdmmc_host.enable_interrupt(&mut test);
+    let _ = sdmmc_host.config_interrupt(false, false);
 
     /*
     unsafe {
@@ -129,10 +125,8 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
         print_one_block(unsafe_stolen_memory.as_ptr(), 64);
     }
 
-    let mut irq_to_enable = MMC_INTERRUPT_ERROR | MMC_INTERRUPT_END_OF_CHAIN;
-
     // Should always succeed, at least for odroid C4
-    let _ = sdmmc_host.enable_interrupt(&mut irq_to_enable);
+    let _ = sdmmc_host.config_interrupt(false, false);
     HandlerImpl {
         future: None,
         sdmmc: Some(sdmmc_host),

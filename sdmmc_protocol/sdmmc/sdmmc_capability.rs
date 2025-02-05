@@ -93,10 +93,3 @@ pub const MMC_CAP_BUS_WIDTH_TEST: u128 = 1 << 18;
 pub const MMC_CAP_VOLTAGE_TUNE: u128 = 1 << 29;
 pub const MMC_CAP_CMD23: u128 = 1 << 30;
 pub const MMC_CAP_AUTO_STOP: u128 = 1 << 31;
-
-// Interrupt related
-pub const MMC_INTERRUPT_END_OF_CHAIN: u32 = 1 << 0;
-pub const MMC_INTERRUPT_SUCCESSFUL_REQUEST: u32 = 1 << 1;
-pub const MMC_INTERRUPT_SUCCESSFUL_READ_WRITE_REQUEST: u32 = 1 << 2;
-pub const MMC_INTERRUPT_ERROR: u32 = 1 << 3;
-pub const MMC_INTERRUPT_SDIO: u32 = 1 << 4;

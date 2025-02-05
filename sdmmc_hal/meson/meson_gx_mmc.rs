@@ -3,8 +3,7 @@ use core::ptr;
 use sdmmc_protocol::sdmmc::{
     mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
-        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_INTERRUPT_END_OF_CHAIN,
-        MMC_INTERRUPT_ERROR, MMC_INTERRUPT_SDIO, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS,
+        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS,
         MMC_TIMING_UHS,
     },
     HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
@@ -138,7 +137,7 @@ const IRQ_RESP_STATUS: u32 = 1 << 14;
 const IRQ_SDIO: u32 = 1 << 15;
 const IRQ_ERR_MASK: u32 = IRQ_CRC_ERR | IRQ_TIMEOUTS;
 
-const IRQ_EN_MASK: u32 = IRQ_CRC_ERR | IRQ_TIMEOUTS | IRQ_END_OF_CHAIN;
+const IRQ_EN_MASK: u32 = IRQ_ERR_MASK | IRQ_END_OF_CHAIN;
 
 const MESON_SDCARD_SECTOR_SIZE: u32 = 512;
 
@@ -452,7 +451,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
             power_mode: MmcPowerMode::On,
             bus_width: MmcBusWidth::Width1,
             signal_voltage: MmcSignalVoltage::Voltage330,
-            enabled_irq: 0,
+            enabled_irq: false,
             bus_mode: None,
             emmc: None,
             spi: None,
@@ -462,7 +461,6 @@ impl SdmmcHardware for SdmmcMesonHardware {
             max_frequency: MESON_MAX_FREQUENCY as u64,
             min_frequency: MESON_MIN_FREQUENCY as u64,
             max_block_per_req: MAX_BLOCK_PER_TRANSFER,
-            irq_capability: MMC_INTERRUPT_END_OF_CHAIN | MMC_INTERRUPT_ERROR | MMC_INTERRUPT_SDIO,
         };
 
         return Ok((ios, info, cap));
@@ -728,7 +726,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
     }
 
     /// This function is meant to clear, acknowledge and then reenable the interrupt
-    fn sdmmc_enable_interrupt(&mut self, irq_to_enable: &mut u32) -> Result<(), SdmmcHalError> {
+    fn sdmmc_config_interrupt(&mut self, enable_irq: bool, enable_sdio_irq: bool) -> Result<(), SdmmcHalError> {
         // Disable interrupt
         unsafe {
             ptr::write_volatile(&mut self.register.irq_en, 0);
@@ -738,15 +736,11 @@ impl SdmmcHardware for SdmmcMesonHardware {
         unsafe {
             ptr::write_volatile(&mut self.register.status, IRQ_EN_MASK | IRQ_SDIO);
         }
-
         let mut irq_bits_to_set: u32 = 0;
-        if *irq_to_enable & MMC_INTERRUPT_END_OF_CHAIN > 0 {
-            irq_bits_to_set |= IRQ_END_OF_CHAIN;
+        if enable_irq == true {
+            irq_bits_to_set |= IRQ_EN_MASK;
         }
-        if *irq_to_enable & MMC_INTERRUPT_ERROR > 0 {
-            irq_bits_to_set |= IRQ_ERR_MASK;
-        }
-        if *irq_to_enable & MMC_INTERRUPT_SDIO > 0 {
+        if enable_sdio_irq == true {
             irq_bits_to_set |= IRQ_SDIO;
         }
         unsafe {
@@ -755,19 +749,9 @@ impl SdmmcHardware for SdmmcMesonHardware {
         return Ok(());
     }
 
-    fn sdmmc_ack_interrupt(&mut self, irq_enabled: &u32) -> Result<(), SdmmcHalError> {
-        let mut irq_bits_to_set: u32 = 0;
-        if *irq_enabled & MMC_INTERRUPT_END_OF_CHAIN > 0 {
-            irq_bits_to_set |= IRQ_END_OF_CHAIN;
-        }
-        if *irq_enabled & MMC_INTERRUPT_ERROR > 0 {
-            irq_bits_to_set |= IRQ_ERR_MASK;
-        }
-        if *irq_enabled & MMC_INTERRUPT_SDIO > 0 {
-            irq_bits_to_set |= IRQ_SDIO;
-        }
+    fn sdmmc_ack_interrupt(&mut self) -> Result<(), SdmmcHalError> {
         unsafe {
-            ptr::write_volatile(&mut self.register.status, irq_bits_to_set);
+            ptr::write_volatile(&mut self.register.status, IRQ_END_OF_CHAIN | IRQ_ERR_MASK | IRQ_SDIO);
         }
         return Ok(());
     }
@@ -878,6 +862,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 unsafe {
                     ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
                 }
+                self.sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage330)?;
             }
             _ => return Err(SdmmcHalError::EINVAL),
         }
