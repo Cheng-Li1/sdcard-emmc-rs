@@ -256,6 +256,7 @@ pub struct MmcIos {
     pub spi: Option<SpiSettings>,
 }
 
+#[derive(Debug, Clone)]
 pub struct HostInfo {
     pub max_frequency: u64,
     pub min_frequency: u64,
@@ -671,11 +672,6 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         })
     }
 
-    /// Placeholder function for validating if the host satisfy the minimal operation condition
-    fn validate_host_capibaility(host_info: HostInfo, cap: SdmmcHostCapability) {
-        todo!()
-    }
-
     /// A function that tune the card speed
     /// This function does not do roll back so if this function return an error, reset up the card
     /// Do NOT call this function again if your card is already tuned as this function is not that cheap!
@@ -737,6 +733,10 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             MmcDevice::EMmc(emmc) => Err(SdmmcHalError::ENOTIMPLEMENTED),
             MmcDevice::Unknown => Err(SdmmcHalError::ENOTIMPLEMENTED),
         }
+    }
+
+    pub fn get_host_info(&mut self) -> HostInfo {
+        self.host_info.clone()
     }
 
     /// Delete it later
