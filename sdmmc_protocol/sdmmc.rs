@@ -16,7 +16,9 @@ use sdmmc_constant::{
 };
 use sel4_microkit::{debug_print, debug_println};
 
-use crate::sdmmc_traits::SdmmcHardware;
+use crate::{debug_log, sdmmc_traits::SdmmcHardware};
+
+use crate::sdmmc_os::process_wait_unreliable;
 
 pub mod mmc_struct;
 mod sdcard;
@@ -262,18 +264,6 @@ pub struct HostInfo {
     pub max_block_per_req: u32,
 }
 
-#[cfg(feature = "sel4-microkit")] 
-use sel4_microkit_support::program_wait_unreliable;
-
-
-
-#[cfg(not(feature = "sel4-microkit"))]
-fn program_wait_unreliable(time_ns: u64) {
-    for _ in 0..time_ns {
-        hint::spin_loop(); // Use spin loop hint to reduce contention during the wait
-    }
-}
-
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
 pub struct SdmmcProtocol<T: SdmmcHardware> {
     pub hardware: T,
@@ -339,10 +329,10 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         // TODO: A delay should be insert here, now it is using debug print to simulate the delay
         // Check the sdcard soecification to see if this delay is indeed needed
-        debug_println!("Add some delay here!");
+        debug_log!("Add some delay here!");
 
         // TODO: figuring out the optimal delay
-        program_wait_unreliable(10000000);
+        process_wait_unreliable(10000000);
 
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
@@ -362,7 +352,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             Ok(())
         } else {
             // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
-            debug_println!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!");
+            debug_log!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!");
             Err(SdmmcError::EUNSUPPORTEDCARD)
         }
     }
@@ -706,14 +696,14 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
 
         // TODO: figuring out the optimal delay
-        program_wait_unreliable(100000);
+        process_wait_unreliable(100000);
 
         let mut signal: u8 = 0xFF;
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
             // TODO: figuring out the optimal delay
-            program_wait_unreliable(100000);
+            process_wait_unreliable(100000);
             sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
             if signal & 0xF == 0x0 {
                 break;
@@ -728,17 +718,17 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             .sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
 
         // TODO: figuring out the optimal delay
-        program_wait_unreliable(10000000);
+        process_wait_unreliable(10000000);
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
         // TODO: figuring out the optimal delay
-        program_wait_unreliable(100000);
+        process_wait_unreliable(100000);
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
             // TODO: figuring out the optimal delay
-            program_wait_unreliable(100000);
+            process_wait_unreliable(100000);
             sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
             if signal & 0xF == 0xF {
                 break;

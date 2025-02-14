@@ -1,6 +1,6 @@
 use core::ptr;
 
-use sdmmc_protocol::{
+use sdmmc_protocol::{debug_log, 
     sdmmc::{
     mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
@@ -9,29 +9,8 @@ use sdmmc_protocol::{
     },
     HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError
     },
-    sdmmc_traits::SdmmcHardware
+    sdmmc_traits::SdmmcHardware,
 };
-
-// `sel4-microkit` specific implementation
-#[cfg(feature = "sel4-microkit")]
-#[macro_use]
-mod os_layer {
-    macro_rules! debug_log {
-        ($($arg:tt)*) => {
-            sel4_microkit::debug_println!($($arg)*);
-        };
-    }
-}
-
-/// Bare metal
-#[cfg(not(feature = "sel4-microkit"))]
-#[macro_use]
-mod os_layer {
-    // No operation, would be optimized out
-    macro_rules! debug_log {
-        ($($arg:tt)*) => {};
-    }
-}
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
 
@@ -369,12 +348,9 @@ impl SdmmcMesonHardware {
                 *rsp2 = ptr::read_volatile(&self.register.cmd_rsp1);
                 *rsp3 = ptr::read_volatile(&self.register.cmd_rsp);
             }
-            // debug_println!("Meson received 4 response back!");
         } else if cmd.resp_type & MMC_RSP_PRESENT != 0 {
             unsafe {
                 *rsp0 = ptr::read_volatile(&self.register.cmd_rsp);
-                // debug_println!("Meson response value: {:#034b} (binary), {:#X} (hex)", *rsp0, *rsp0);
-                // debug_println!("Meson received 1 response back!");
             }
         }
     }

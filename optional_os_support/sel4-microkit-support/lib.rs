@@ -21,7 +21,7 @@ use core::hint;
 /// For accurate delays, use a hardware timer or platform-specific APIs.
 /// TODO: Change this to using a timer to stop later
 #[inline]
-pub fn program_wait_unreliable(time_ns: u64) {
+pub fn process_wait_unreliable(time_ns: u64) {
     for _ in 0..time_ns {
         hint::spin_loop(); // Use spin loop hint to reduce contention during the wait
     }
