@@ -18,7 +18,8 @@ use sddf_blk::{
 };
 use sdmmc_hal::meson_gx_mmc::SdmmcMesonHardware;
 
-use sdmmc_protocol::sdmmc::{SdmmcHalError, SdmmcHardware, SdmmcProtocol};
+use sdmmc_protocol::sdmmc::{SdmmcError, SdmmcProtocol};
+use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
 const BLK_VIRTUALIZER: sel4_microkit::Channel = sel4_microkit::Channel::new(0);
@@ -136,7 +137,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
 }
 
 struct HandlerImpl<T: SdmmcHardware> {
-    future: Option<Pin<Box<dyn Future<Output = (Result<(), SdmmcHalError>, SdmmcProtocol<T>)>>>>,
+    future: Option<Pin<Box<dyn Future<Output = (Result<(), SdmmcError>, SdmmcProtocol<T>)>>>>,
     sdmmc: Option<SdmmcProtocol<T>>,
     request: Option<BlkRequest>,
     retry: u16,

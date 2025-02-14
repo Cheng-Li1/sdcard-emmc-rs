@@ -1,13 +1,15 @@
 use core::ptr;
 
-use sdmmc_protocol::sdmmc::{
+use sdmmc_protocol::{
+    sdmmc::{
     mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
         MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS,
         MMC_TIMING_UHS,
     },
-    HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
-    SdmmcHalError, SdmmcHardware,
+    HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError
+    },
+    sdmmc_traits::SdmmcHardware
 };
 
 // `sel4-microkit` specific implementation
@@ -380,7 +382,7 @@ impl SdmmcMesonHardware {
     /// The result that such function exists instead of using generic frequency is that different
     /// hosts may have preferred frequency for speed classes. For example, in meson, the frequency for
     /// UhsSdr104 would be 200Mhz instead of 208Mhz
-    fn meson_frequency(timing: MmcTiming) -> Result<u32, SdmmcHalError> {
+    fn meson_frequency(timing: MmcTiming) -> Result<u32, SdmmcError> {
         let freq: u32 = match timing {
             MmcTiming::Legacy => 25000000,
             MmcTiming::MmcHs => 26000000,
@@ -397,7 +399,7 @@ impl SdmmcMesonHardware {
             MmcTiming::CardSetup => MESON_MIN_FREQUENCY,
             MmcTiming::CardSleep => MESON_MIN_FREQUENCY,
             _ => {
-                return Err(SdmmcHalError::EINVAL);
+                return Err(SdmmcError::EINVAL);
             }
         };
         Ok(freq)
@@ -431,7 +433,7 @@ impl SdmmcMesonHardware {
 }
 
 impl SdmmcHardware for SdmmcMesonHardware {
-    fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcHalError> {
+    fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
         let cap: u128 = MMC_TIMING_LEGACY
             | MMC_TIMING_SD_HS
             | MMC_TIMING_UHS
@@ -466,7 +468,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         return Ok((ios, info, cap));
     }
 
-    fn sdmmc_tune_sampling(&mut self, state: TuningState) -> Result<(), SdmmcHalError> {
+    fn sdmmc_tune_sampling(&mut self, state: TuningState) -> Result<(), SdmmcError> {
         match state {
             TuningState::TuningStart => {
                 if let Some(ref mut delay_config) = self.delay {
@@ -501,14 +503,14 @@ impl SdmmcHardware for SdmmcMesonHardware {
         let mux_clk_freq: u32 = match clk_src {
             CLK_SRC_24M => SD_EMMC_CLKSRC_24M,
             CLK_SRC_DIV2 => SD_EMMC_CLKSRC_DIV2,
-            _ => return Err(SdmmcHalError::EUNDEFINED),
+            _ => return Err(SdmmcError::EUNDEFINED),
         };
 
         let max_div: u32 = div_round_up!(mux_clk_freq, self.frequency);
 
         if max_div - delay_config.tried_highest_delay >= delay_config.tried_lowest_delay {
             if max_div - delay_config.tried_highest_delay == 0 {
-                return Err(SdmmcHalError::EUNSUPPORTEDCARD);
+                return Err(SdmmcError::EUNSUPPORTEDCARD);
             }
             delay_config.tried_highest_delay += 1;
             delay_config.current_delay = delay_config.tried_highest_delay;
@@ -530,7 +532,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(())
     }
 
-    fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcHalError> {
+    fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcError> {
         // Why calling this function if the timing does not change?
         if self.timing == timing {
             return Ok(self.frequency as u64);
@@ -550,7 +552,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         let freq: u32 = Self::meson_frequency(timing)?;
 
         if freq > MESON_MAX_FREQUENCY || freq < MESON_MIN_FREQUENCY {
-            return Err(SdmmcHalError::EINVAL);
+            return Err(SdmmcError::EINVAL);
         }
         // #define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
         let mut meson_mmc_clk: u32 = 0;
@@ -613,7 +615,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(self.frequency as u64)
     }
 
-    fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcHalError> {
+    fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcError> {
         let mut meson_mmc_cfg: u32;
         unsafe {
             meson_mmc_cfg = ptr::read_volatile(&self.register.cfg);
@@ -629,7 +631,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(())
     }
 
-    fn sdmmc_read_datalanes(&self) -> Result<u8, SdmmcHalError> {
+    fn sdmmc_read_datalanes(&self) -> Result<u8, SdmmcError> {
         unsafe {
             // Read the status register
             let status = ptr::read_volatile(&self.register.status);
@@ -643,7 +645,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         &mut self,
         cmd: &SdmmcCmd,
         data: Option<&MmcData>,
-    ) -> Result<(), SdmmcHalError> {
+    ) -> Result<(), SdmmcError> {
         // Set up the data addr
         let mut data_addr: u32 = 0u32;
         if let Some(mmc_data) = data {
@@ -653,7 +655,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 || mmc_data.blockcnt > MAX_BLOCK_PER_TRANSFER
             {
                 debug_log!("SDMMC: INVALID INPUT VARIABLE!");
-                return Err(SdmmcHalError::EINVAL);
+                return Err(SdmmcError::EINVAL);
             }
             // Depend on the flag and hardware, the cache should be flushed accordingly
             data_addr = mmc_data.addr as u32;
@@ -691,7 +693,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         &self,
         cmd: &SdmmcCmd,
         response: &mut [u32; 4],
-    ) -> Result<(), SdmmcHalError> {
+    ) -> Result<(), SdmmcError> {
         let status: u32;
 
         unsafe {
@@ -699,7 +701,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         }
 
         if (status & STATUS_END_OF_CHAIN) == 0 {
-            return Err(SdmmcHalError::EBUSY);
+            return Err(SdmmcError::EBUSY);
         }
 
         if (status & STATUS_RESP_TIMEOUT) != 0 {
@@ -707,17 +709,17 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 "SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}",
                 status
             );
-            return Err(SdmmcHalError::ETIMEDOUT);
+            return Err(SdmmcError::ETIMEDOUT);
         }
 
-        let mut return_val: Result<(), SdmmcHalError> = Ok(());
+        let mut return_val: Result<(), SdmmcError> = Ok(());
 
         if (status & STATUS_ERR_MASK) != 0 {
             debug_log!(
                 "SDMMC: CARD IO ERROR! Host status register: 0x{:08x}",
                 status
             );
-            return_val = Err(SdmmcHalError::EIO);
+            return_val = Err(SdmmcError::EIO);
         }
 
         self.meson_read_response(cmd, response);
@@ -726,7 +728,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
     }
 
     /// This function is meant to clear, acknowledge and then reenable the interrupt
-    fn sdmmc_config_interrupt(&mut self, enable_irq: bool, enable_sdio_irq: bool) -> Result<(), SdmmcHalError> {
+    fn sdmmc_config_interrupt(&mut self, enable_irq: bool, enable_sdio_irq: bool) -> Result<(), SdmmcError> {
         // Disable interrupt
         unsafe {
             ptr::write_volatile(&mut self.register.irq_en, 0);
@@ -749,14 +751,14 @@ impl SdmmcHardware for SdmmcMesonHardware {
         return Ok(());
     }
 
-    fn sdmmc_ack_interrupt(&mut self) -> Result<(), SdmmcHalError> {
+    fn sdmmc_ack_interrupt(&mut self) -> Result<(), SdmmcError> {
         unsafe {
             ptr::write_volatile(&mut self.register.status, IRQ_END_OF_CHAIN | IRQ_ERR_MASK | IRQ_SDIO);
         }
         return Ok(());
     }
 
-    fn sdmmc_set_signal_voltage(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcHalError> {
+    fn sdmmc_set_signal_voltage(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
         match voltage {
             MmcSignalVoltage::Voltage330 => {
                 let mut value: u32;
@@ -792,7 +794,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                     ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
                 }
             }
-            MmcSignalVoltage::Voltage120 => return Err(SdmmcHalError::EINVAL),
+            MmcSignalVoltage::Voltage120 => return Err(SdmmcError::EINVAL),
         }
         // Disable pull-up/down for gpioAO_6
         let mut value: u32;
@@ -804,30 +806,13 @@ impl SdmmcHardware for SdmmcMesonHardware {
             ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
         }
         Ok(())
-        /*
-        debug_log!("Reading memory region: {:#x} - {:#x}", AO_RTI_PIN_REGION_START, AO_RTI_PIN_REGION_END);
-
-        // Iterate over the region, assuming 4-byte aligned registers
-        let mut addr = AO_RTI_PIN_REGION_START;
-        while addr < AO_RTI_PIN_REGION_END {
-            unsafe {
-                // Cast the address to a pointer to u32
-                let ptr = addr as *const u32;
-                // Read the value using ptr::read_volatile
-                let value = ptr::read_volatile(ptr);
-                debug_log!("Address {:#x}: {:#x}", addr, value);
-            }
-            addr += 4; // Increment by 4 for the next 32-bit word
-        }
-        Ok(())
-        */
     }
 
 
     // Experimental function that tries to modify the pin that might control the power of the sdcard slot
     // This function should be pretty much the same with sdmmc_set_signal_voltage, the only difference
-    // is the pin modified is gpioAO_3, a \busy wait might need to be added after setting the power
-    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<MmcPowerMode, SdmmcHalError> {
+    // is the pin modified is gpioAO_3, busy wait is needed to be added after setting the power
+    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<MmcPowerMode, SdmmcError> {
         match power_mode {
             MmcPowerMode::On => {
                 let mut value: u32;
@@ -864,7 +849,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 }
                 self.sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage330)?;
             }
-            _ => return Err(SdmmcHalError::EINVAL),
+            _ => return Err(SdmmcError::EINVAL),
         }
         // Disable pull-up/down for gpioAO_3
         let mut value: u32;
