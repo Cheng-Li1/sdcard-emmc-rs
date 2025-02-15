@@ -1,15 +1,13 @@
 use core::ptr;
 
-use sdmmc_protocol::{debug_log, 
-    sdmmc::{
+use sdmmc_protocol::{debug_log, sdmmc::{
     mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
         MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS,
         MMC_TIMING_UHS,
     },
     HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError
-    },
-    sdmmc_traits::SdmmcHardware,
+    }, sdmmc_os::process_wait_unreliable, sdmmc_traits::SdmmcHardware
 };
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
@@ -158,15 +156,6 @@ fn ilog2(x: u32) -> u32 {
  *  #define SD_EMMC_RXD             0x94
  *  #define SD_EMMC_TXD             0x94
  *  #define SD_EMMC_LAST_REG        SD_EMMC_TXD
- */
-// I think I find a bug in Linux, the odroid C4 delay register mapping are the same with meson-axg but it belongs to meson-gx
-/*
- *  There are some assumptions that I have made for this driver:
- *  1. The card is already powered on by U-Boot, so I do not need to manually manipulate
- *  gpio pins or regulator to turn it on or off.
- *  2. The clocks are already enabled by U-Boot and there is no implicit clock shutdown when the uboot start to run
- *  my image, so I do not need to turn on the clocks that the sd card needs by myself.
- *
  */
 #[repr(C)]
 struct MesonSdmmcRegisters {
@@ -405,6 +394,23 @@ impl SdmmcMesonHardware {
             // Write the updated value back to the configuration register
             ptr::write_volatile(&mut self.register.cfg, meson_mmc_cfg);
         }
+    }
+
+    const DESC_STOP_TIMEOUT_NS: u32 = 5_000_000; // 5ms in nanoseconds
+    const POLL_INTERVAL_NS: u32 = 100_000; // 100µs in nanoseconds
+    /// Waits for the descriptor engine to stop, with a timeout
+    fn meson_wait_desc_stop(&self) -> Result<(), SdmmcError> {
+        let mut start_time: u32 = 0;
+
+        while unsafe { ptr::read_volatile(&self.register.status) } & (STATUS_DESC_BUSY | STATUS_BUSY) != 0 {
+            if start_time > Self::DESC_STOP_TIMEOUT_NS {
+                return Err(SdmmcError::EUNDEFINED);
+            }
+            // Use the provided wait function instead of sleep
+            process_wait_unreliable(Self::POLL_INTERVAL_NS as u64);
+            start_time += Self::POLL_INTERVAL_NS;
+        }
+        Ok(())
     }
 }
 
@@ -685,6 +691,8 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 "SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}",
                 status
             );
+            // This could negatively impact the result of benchmarking in case of cmd error
+            self.meson_wait_desc_stop()?;
             return Err(SdmmcError::ETIMEDOUT);
         }
 
@@ -695,6 +703,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 "SDMMC: CARD IO ERROR! Host status register: 0x{:08x}",
                 status
             );
+            self.meson_wait_desc_stop()?;
             return_val = Err(SdmmcError::EIO);
         }
 

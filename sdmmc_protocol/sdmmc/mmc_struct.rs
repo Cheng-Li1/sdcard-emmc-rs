@@ -37,29 +37,6 @@ pub enum MmcTiming {
     ClockStop = 15,
 }
 
-impl MmcTiming {
-    pub(crate) fn frequency(&self) -> u64 {
-        match self {
-            MmcTiming::Legacy => 25000000,
-            MmcTiming::MmcHs => 26000000,
-            MmcTiming::SdHs => 50000000,
-            MmcTiming::UhsSdr12 => 25000000,
-            MmcTiming::UhsSdr25 => 50000000,
-            MmcTiming::UhsSdr50 => 100000000,
-            MmcTiming::UhsSdr104 => 208000000,
-            MmcTiming::UhsDdr50 => 50000000,
-            MmcTiming::MmcDdr52 => 52000000,
-            MmcTiming::MmcHs200 => 200000000,
-            MmcTiming::MmcHs400 => 200000000,
-            MmcTiming::SdExp => 985000000, // Example frequency, adjust as needed
-            MmcTiming::SdExp12V => 985000000, // Example frequency, adjust as needed
-            MmcTiming::CardSetup => 400000,
-            MmcTiming::CardSleep => 400000,
-            MmcTiming::ClockStop => 0, // Typical low frequency for card initialization
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MmcState {
     /// The timing specification that dictates how data is transferred between the host
@@ -85,6 +62,7 @@ pub(crate) struct MmcState {
     pub(crate) bus_width: MmcBusWidth,
 }
 
+/// Some of the MmcDevice is reserved for future use
 pub(crate) enum MmcDevice {
     Sdcard(Sdcard),
     EMmc(EMmc),
