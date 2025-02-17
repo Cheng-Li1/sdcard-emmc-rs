@@ -2,6 +2,10 @@
 
 use core::hint;
 
+/// Api should only accessible in this crate
+#[doc(hidden)]
+pub use sel4_microkit::debug_print;
+
 /// Spins for an approximate number of nanoseconds.
 ///
 /// This function is unreliable because it does not account for CPU frequency,
@@ -24,5 +28,13 @@ use core::hint;
 pub fn process_wait_unreliable(time_ns: u64) {
     for _ in 0..time_ns {
         hint::spin_loop(); // Use spin loop hint to reduce contention during the wait
+    }
+}
+
+/// `sel4-microkit` specific serial implementation
+#[macro_export]
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        $crate::debug_print!($($arg)*);
     }
 }

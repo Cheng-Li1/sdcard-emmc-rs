@@ -1,13 +1,13 @@
 use core::ptr;
 
-use sdmmc_protocol::{debug_log, sdmmc::{
+use sdmmc_protocol::{sdmmc::{
     mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
         MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS,
         MMC_TIMING_UHS,
     },
     HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError
-    }, sdmmc_os::process_wait_unreliable, sdmmc_traits::SdmmcHardware
+    }, sdmmc_os::{process_wait_unreliable, debug_log}, sdmmc_traits::SdmmcHardware
 };
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
@@ -218,9 +218,8 @@ impl SdmmcMesonHardware {
         }
     }
 
-    /// It is quite obvious that this meson_reset function does not attempt to reset every registers as there are a lot of them
-    /// So there is one assumption here that the bootloader did not leave the host register in a very strange state
-    /// that may breaks the driver
+    /// The meson_reset function reset the host register state
+    /// However, this function does not try to reset the power state like operating voltage and signal voltage
     fn meson_reset(&mut self) {
         // Stop execution
         unsafe {
@@ -436,7 +435,6 @@ impl SdmmcHardware for SdmmcMesonHardware {
             bus_width: MmcBusWidth::Width1,
             signal_voltage: MmcSignalVoltage::Voltage330,
             enabled_irq: false,
-            bus_mode: None,
             emmc: None,
             spi: None,
         };
@@ -503,7 +501,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
 
         adjust |= (delay_config.current_delay << SD_EMMC_ADJ) & SD_EMMC_ADJUST_ADJ_DELAY_MASK;
 
-        sel4_microkit::debug_println!("Tuning sampling function: Current delay: {}, tried lowest delay: {}, tried highest delay: {}, final register value: 0x{:08x}", delay_config.current_delay, delay_config.tried_lowest_delay, delay_config.tried_highest_delay, adjust);
+        debug_log!("Tuning sampling function: Current delay: {}, tried lowest delay: {}, tried highest delay: {}, final register value: 0x{:08x}\n", delay_config.current_delay, delay_config.tried_lowest_delay, delay_config.tried_highest_delay, adjust);
 
         self.delay = Some(delay_config);
 

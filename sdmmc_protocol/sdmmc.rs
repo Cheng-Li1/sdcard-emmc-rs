@@ -14,11 +14,10 @@ use sdmmc_capability::{
 use sdmmc_constant::{
     MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_ERASE, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_SET_BLOCK_COUNT, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_ERASE_WR_BLK_END, SD_CMD_ERASE_WR_BLK_START, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V, SD_ERASE_ARG, SD_SWITCH_FUNCTION_GROUP_ONE, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_LEGACY, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY, SD_SWITCH_FUNCTION_GROUP_ONE_SET_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50, SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE
 };
-use sel4_microkit::{debug_print, debug_println};
 
-use crate::{debug_log, sdmmc_traits::SdmmcHardware};
+use crate::sdmmc_traits::SdmmcHardware;
 
-use crate::sdmmc_os::process_wait_unreliable;
+use crate::sdmmc_os::{debug_log, process_wait_unreliable};
 
 pub mod mmc_struct;
 mod sdcard;
@@ -102,13 +101,6 @@ pub enum MmcDriverType {
     TypeA = 1,
     TypeC = 2,
     TypeD = 3,
-}
-
-// Enums for bus_mode
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum MmcBusMode {
-    OpenDrain = 1,
-    PushPull = 2,
 }
 
 // Enums for chip_select
@@ -226,25 +218,8 @@ pub struct MmcIos {
     ///   - `SignalVoltage::Voltage120`: 1.2V signaling (mainly for newer eMMC devices).
     pub signal_voltage: MmcSignalVoltage,
 
+    /// Indicating if interrupt is enabled or not
     pub enabled_irq: bool,
-
-    /// The bus mode for communication between the host and the card.
-    ///
-    /// This field defines how the host drives the command lines when communicating with the SD/MMC card.
-    /// It is mainly relevant during the initialization process or in certain low-speed configurations.
-    ///
-    /// - **Open-Drain Mode** (`MmcBusMode::OpenDrain`):
-    ///   - In open-drain mode, the command line is driven low by the host or the card but pulled high by a resistor.
-    ///   - This mode is typically used during the **initialization phase** or when there are multiple cards on the same bus.
-    ///   - It allows multiple devices to safely share the bus without causing signal contention.
-    ///
-    /// - **Push-Pull Mode** (`MmcBusMode::PushPull`):
-    ///   - In push-pull mode, the host actively drives the command line both high and low.
-    ///   - This mode is used for **high-speed data transfers** after initialization, where higher performance is required.
-    ///
-    /// Typically, **push-pull mode** is used once the card is fully initialized and the bus is stable.
-    /// In most cases, you don't need to manually configure the bus mode because modern controllers handle this automatically.
-    pub bus_mode: Option<MmcBusMode>,
 
     /// eMMC-specific settings, if applicable.
     ///
@@ -327,10 +302,6 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // This command does not expect a response
         self.hardware.sdmmc_send_command(&cmd, None)?;
 
-        // TODO: A delay should be insert here, now it is using debug print to simulate the delay
-        // Check the sdcard soecification to see if this delay is indeed needed
-        debug_log!("Add some delay here!");
-
         // TODO: figuring out the optimal delay
         process_wait_unreliable(10000000);
 
@@ -370,7 +341,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         let mut timeout: u16 = 1000;
 
         loop {
-            debug_println!("Sending SD_CMD_APP_SEND_OP_COND!");
+            debug_log!("Sending SD_CMD_APP_SEND_OP_COND!");
             // Prepare CMD55 (APP_CMD)
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_APP_CMD,
@@ -409,7 +380,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // Send ACMD41
             Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
 
-            debug_println!("OCR: {:08x}", resp[0]);
+            debug_log!("OCR: {:08x}", resp[0]);
 
             // Check if card is ready (OCR_BUSY bit)
             if (resp[0] & OCR_BUSY) != 0 {
@@ -418,7 +389,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
             // Timeout handling
             if timeout <= 0 {
-                debug_println!("SDMMC: Setting voltage failed, card not supported!");
+                debug_log!("SDMMC: Setting voltage failed, card not supported!");
                 return Err(SdmmcError::EUNSUPPORTEDCARD);
             }
             timeout -= 1;
@@ -452,8 +423,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             | (resp[3] as u128);
 
         // TODO: Figure out a better way to do this than adding microkit crate
-        sel4_microkit::debug_println!(
-            "CID: {:08x} {:08x} {:08x} {:08x}",
+        debug_log!(
+            "CID: {:08x} {:08x} {:08x} {:08x}\n",
             resp[0],
             resp[1],
             resp[2],
@@ -471,7 +442,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         let rca: u16 = (resp[0] >> 16) as u16; // Store RCA from response
 
-        sel4_microkit::debug_println!("RCA: {:04x}", rca);
+        debug_log!("RCA: {:04x}\n", rca);
 
         // 6. Send CMD9 to get the CSD register
         cmd = SdmmcCmd {
@@ -481,8 +452,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         };
         Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
 
-        sel4_microkit::debug_println!(
-            "CSD: {:08x} {:08x} {:08x} {:08x}",
+        debug_log!(
+            "CSD: {:08x} {:08x} {:08x} {:08x}\n",
             resp[0],
             resp[1],
             resp[2],
@@ -588,7 +559,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         self.host_info.clone()
     }
 
-    /// Delete it later
+    /// Helper function to print out the content of one block
     #[allow(dead_code)]
     unsafe fn print_one_block(ptr: *const u8, num: usize) {
         unsafe {
@@ -596,11 +567,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             for i in 0..num {
                 let byte = *ptr.add(i);
                 if i % 16 == 0 {
-                    debug_print!("\n{:04x}: ", i);
+                    debug_log!("\n{:04x}: ", i);
                 }
-                debug_print!("{:02x} ", byte);
+                debug_log!("{:02x} ", byte);
             }
-            debug_println!();
+            debug_log!("\n");
         }
     }
 
@@ -611,7 +582,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             flags: MmcDataFlag::SdmmcDataRead,
             addr: destination,
         };
-        debug_println!("Gonna test read one block!");
+        debug_log!("Gonna test read one block!\n");
         let mut resp: [u32; 4] = [0; 4];
         let cmd_arg: u64 = start_idx;
         let cmd = SdmmcCmd {
@@ -622,7 +593,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         if let Err(error) =
             Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)
         {
-            debug_println!("Error in reading");
+            debug_log!("Error in reading\n");
         }
         unsafe { Self::print_one_block(destination as *mut u8, 512) };
     }
@@ -683,7 +654,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
     /// Switch voltage function
     fn tune_sdcard_switch_uhs18v(&mut self) -> Result<(), SdmmcError> {
-        sel4_microkit::debug_println!("Entering tune sdcard signal voltage function!");
+        debug_log!("Entering tune sdcard signal voltage function!\n");
         let mut resp: [u32; 4] = [0; 4];
         let cmd = SdmmcCmd {
             cmdidx: SD_CMD_SWITCH_UHS18V,
@@ -691,7 +662,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0, // Argument for 4-bit mode (0 for 1-bit mode)
         };
         Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
-        sel4_microkit::debug_println!("Switch voltage prepared!");
+        debug_log!("Switch voltage prepared!\n");
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
 
@@ -704,7 +675,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             signal = self.hardware.sdmmc_read_datalanes()?;
             // TODO: figuring out the optimal delay
             process_wait_unreliable(100000);
-            sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
+            debug_log!("data signal value: 0b{:b}\n", signal);
             if signal & 0xF == 0x0 {
                 break;
             }
@@ -729,7 +700,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             signal = self.hardware.sdmmc_read_datalanes()?;
             // TODO: figuring out the optimal delay
             process_wait_unreliable(100000);
-            sel4_microkit::debug_println!("data signal value: 0b{:b}", signal);
+            debug_log!("data signal value: 0b{:b}\n", signal);
             if signal & 0xF == 0xF {
                 break;
             }
@@ -889,7 +860,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
             self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width4)?;
 
-            sel4_microkit::debug_println!("Tuning datalanes succeed!");
+            debug_log!("Tuning datalanes succeed!\n");
 
             // If any of the cmd above fail, the card should be completely reinit
             self.mmc_ios.bus_width = MmcBusWidth::Width4;
@@ -1013,7 +984,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 self.mmc_ios.clock = self.hardware.sdmmc_config_timing(timing)?;
                 self.process_sampling(memory.as_ptr() as u64, cache_invalidate_function)?;
 
-                debug_println!("Current frequency: {}Hz", self.mmc_ios.clock);
+                debug_log!("Current frequency: {}Hz", self.mmc_ios.clock);
             } else {
                 return Err(SdmmcError::EUNDEFINED);
             }
@@ -1280,7 +1251,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         if let Err(_) = res {
-            sel4_microkit::debug_println!("Resp[0] value {:08x}", resp[0]);
+            debug_log!("Resp[0] value {:08x}\n", resp[0]);
         }
 
         // TODO: Add renable interrupt here
