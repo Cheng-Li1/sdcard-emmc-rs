@@ -9,10 +9,10 @@ use sdcard::{Cid, Csd, Sdcard};
 use sdmmc_capability::{
     SdcardCapability, SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_EMPTY_CAP,
     MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50, MMC_TIMING_UHS_SDR104,
-    MMC_TIMING_UHS_SDR12, MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50,
+    MMC_TIMING_UHS_SDR12, MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50
 };
 use sdmmc_constant::{
-    MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_ERASE, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_SET_BLOCK_COUNT, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_ERASE_WR_BLK_END, SD_CMD_ERASE_WR_BLK_START, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V, SD_ERASE_ARG, SD_SWITCH_FUNCTION_GROUP_ONE, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_LEGACY, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY, SD_SWITCH_FUNCTION_GROUP_ONE_SET_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50, SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE
+    MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_ERASE, MMC_CMD_GO_IDLE_STATE, MMC_CMD_READ_MULTIPLE_BLOCK, MMC_CMD_READ_SINGLE_BLOCK, MMC_CMD_SELECT_CARD, MMC_CMD_SEND_CSD, MMC_CMD_SET_BLOCK_COUNT, MMC_CMD_STOP_TRANSMISSION, MMC_CMD_WRITE_MULTIPLE_BLOCK, MMC_CMD_WRITE_SINGLE_BLOCK, OCR_BUSY, OCR_HCS, OCR_S18R, SD_CMD_APP_SEND_OP_COND, SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_ERASE_WR_BLK_END, SD_CMD_ERASE_WR_BLK_START, SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V, SD_ERASE_ARG, SD_SWITCH_FUNCTION_GROUP_ONE, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY, SD_SWITCH_FUNCTION_GROUP_ONE_SET_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50, SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE
 };
 
 use crate::sdmmc_traits::SdmmcHardware;
@@ -175,7 +175,7 @@ pub struct MmcIos {
     ///   It indicates the voltage level the card is operating at.
     /// - Common voltage levels are 3.3V, 1.8V, and sometimes 1.2V (for eMMC).
     /// - Cards often negotiate their operating voltage during initialization.
-    pub vdd: u16,
+    pub vdd: u32,
 
     /// The power delay (in milliseconds) used after powering the card to ensure
     /// stable operation.
@@ -274,12 +274,14 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         self.hardware.sdmmc_config_interrupt(false, false)?;
 
         // TODO: Different sdcard and eMMC support different voltages, figure those out
-        if self.mmc_ios.vdd != 330 {
+        if self.mmc_ios.power_mode != MmcPowerMode::On {
             self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
             // TODO: Right now we know the power will always be up and this function should not be called
             // But when we encounter scenerio that may actually call this function, we should wait for the time specified in ios
             // Right now this whole power up related thing does not work
-            self.mmc_ios.vdd = 330;
+            process_wait_unreliable(self.mmc_ios.power_delay_ms as u64 * 1000000);
+
+            self.mmc_ios.power_mode = MmcPowerMode::On;
         }
 
         let clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
@@ -334,10 +336,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
     /// can set bit 7 (reserved for low voltages), but
     /// how to manage low voltages SD card is not yet
     /// specified.
+    /// Check mmc_sd_get_cid() in Linux for card init process
     fn setup_sdcard_cont(&mut self) -> Result<Sdcard, SdmmcError> {
         let mut cmd: SdmmcCmd;
         let mut resp: [u32; 4] = [0; 4];
-        // Uboot define this value to be 1000...
+        // Uboot define this value to 1000...
         let mut timeout: u16 = 1000;
 
         loop {
@@ -362,10 +365,10 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // Since we are only support SDHC card, the OCR_HCS bit must be supported by the card
             cmd.cmdarg |= OCR_HCS;
 
-            // TODO: Right now the operating voltage is hardcoded, it should be changed to be provided by the hal!
-            // And maybe change this when we are trying to support UHS I
+            // Right now we deliberately not set XPC bit for maximum compatibility
+
             // Change this when we decide to support spi or SDSC as well
-            cmd.cmdarg |= (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32) & 0xff8000;
+            cmd.cmdarg |= self.mmc_ios.vdd & 0xff8000;
 
             if self
                 .host_capability
@@ -374,6 +377,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 ))
             {
                 cmd.cmdarg |= OCR_S18R;
+                // It seems that cards will not respond to commands that have MMC_VDD_165_195 bit set, even if the card supports UHS-I
                 // cmd.cmdarg |= MMC_VDD_165_195;
             }
 
@@ -906,6 +910,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             if let Some(MmcDevice::Sdcard(ref sdcard)) = self.mmc_device {
                 sdcard_cap = sdcard.card_cap.clone();
                 timing = sdcard.card_state.timing;
+                // This 'tune_speed thing is a feature called labeled block in Rust
                 'tune_speed: {
                     match self.mmc_ios.signal_voltage {
                         MmcSignalVoltage::Voltage330 => {
@@ -935,7 +940,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                                     cache_invalidate_function,
                                 )?;
                                 timing = MmcTiming::UhsSdr104;
-                                // I want to break here!
+                                // If the switch speed succeed, terminate the block
                                 break 'tune_speed;
                             }
                             if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_DDR50))

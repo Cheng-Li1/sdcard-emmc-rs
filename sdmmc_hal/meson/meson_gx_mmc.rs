@@ -3,11 +3,10 @@ use core::ptr;
 use sdmmc_protocol::{sdmmc::{
     mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
     sdmmc_capability::{
-        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS,
-        MMC_TIMING_UHS,
+        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34
     },
     HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError
-    }, sdmmc_os::{process_wait_unreliable, debug_log}, sdmmc_traits::SdmmcHardware
+    }, sdmmc_os::{debug_log, process_wait_unreliable}, sdmmc_traits::SdmmcHardware
 };
 
 const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
@@ -19,6 +18,7 @@ const AO_RTI_PULL_UP_REG: u64 = 0xff80002c;
 const AO_RTI_OUTPUT_ENABLE_REG: u64 = 0xff800024;
 const AO_RTI_OUTPUT_LEVEL_REG: u64 = 0xff800034;
 const AO_RTI_PULL_UP_EN_REG: u64 = 0xff800030;
+const GPIO_AO_3: u32 = 1 << 3;
 
 macro_rules! div_round_up {
     ($n:expr, $d:expr) => {
@@ -221,6 +221,8 @@ impl SdmmcMesonHardware {
     /// The meson_reset function reset the host register state
     /// However, this function does not try to reset the power state like operating voltage and signal voltage
     fn meson_reset(&mut self) {
+        self.sdmmc_set_power(MmcPowerMode::On);
+
         // Stop execution
         unsafe {
             ptr::write_volatile(&mut self.register.start, 0);
@@ -428,7 +430,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         let ios: MmcIos = MmcIos {
             clock: MESON_MIN_FREQUENCY as u64,
             // On odroid c4, the operating voltage is default to 3.3V
-            vdd: 330,
+            vdd: (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32),
             // TODO, figure out the correct value when we can power the card on and off
             power_delay_ms: 10,
             power_mode: MmcPowerMode::On,
@@ -558,9 +560,9 @@ impl SdmmcHardware for SdmmcMesonHardware {
          * SM1 SoCs doesn't work fine over 50MHz with CLK_CO_PHASE_180
          * If CLK_CO_PHASE_270 is used, it's more stable than other.
          * Other SoCs use CLK_CO_PHASE_180 by default.
-         * But Linux default to use CLK_CO_PHASE_180
-         * It is true that, without tuning, 
-         * Sdcard will not work in High speed mode on Odroid C4 if CLK_CO_PHASE_180 is used
+         * Linux default to use CLK_CO_PHASE_180
+         * However, if CLK_CO_PHASE_180 is used without tuning, 
+         * Sdcard will not work in High speed mode on Odroid C4
          */
         meson_mmc_clk |= CLK_CO_PHASE_180;
         // meson_mmc_clk |= CLK_CO_PHASE_270;
@@ -795,54 +797,54 @@ impl SdmmcHardware for SdmmcMesonHardware {
     // Experimental function that tries to modify the pin that might control the power of the sdcard slot
     // This function should be pretty much the same with sdmmc_set_signal_voltage, the only difference
     // is the pin modified is gpioAO_3, busy wait is needed to be added after setting the power
-    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<MmcPowerMode, SdmmcError> {
+    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {
+        let mut value: u32;
+        unsafe {
+            value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
+        }
+        // If the GPIO pin is not being set as output, set it to output first
+        if value & GPIO_AO_3 != 0 {
+            value &= !GPIO_AO_3;
+            unsafe {
+                ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
+            }
+        }
         match power_mode {
             MmcPowerMode::On => {
-                let mut value: u32;
-                unsafe {
-                    value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
-                }
-                value &= !(1 << 3);
-                unsafe {
-                    ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
-                }
                 unsafe {
                     value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
                 }
-                value &= !(1 << 3);
-                unsafe {
-                    ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
-                }
-            }
-            MmcPowerMode::Off => {
-                let mut value: u32;
-                unsafe {
-                    value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
-                }
-                value &= !(1 << 3);
-                unsafe {
-                    ptr::write_volatile(AO_RTI_OUTPUT_ENABLE_REG as *mut u32, value);
-                }
-                unsafe {
-                    value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
-                }
-                value |= 1 << 3;
-                unsafe {
-                    ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                if value & GPIO_AO_3 != 0 {
+                    value &= !GPIO_AO_3;
+                    unsafe {
+                        ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                    }
                 }
                 self.sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage330)?;
+            }
+            MmcPowerMode::Off => {
+                unsafe {
+                    value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
+                }
+                if value & GPIO_AO_3 == 0 {
+                    value |= GPIO_AO_3;
+                    unsafe {
+                        ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
+                    }
+                }
             }
             _ => return Err(SdmmcError::EINVAL),
         }
         // Disable pull-up/down for gpioAO_3
-        let mut value: u32;
         unsafe {
             value = ptr::read_volatile(AO_RTI_PULL_UP_EN_REG as *const u32);
         }
-        value &= !(1 << 3); // Disable pull-up/down for gpioAO_3
-        unsafe {
-            ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
+        if value & GPIO_AO_3 != 0 {
+            value &= !GPIO_AO_3;
+            unsafe {
+                ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
+            }
         }
-        Ok(power_mode)
+        Ok(())
     }
 }

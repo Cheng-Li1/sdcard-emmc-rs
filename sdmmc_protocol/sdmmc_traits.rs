@@ -4,7 +4,7 @@ use crate::sdmmc::{mmc_struct::{MmcBusWidth, MmcTiming, TuningState}, HostInfo, 
 /// Program async Rust can be very dangerous if you do not know what is happening understand the hood
 /// Power up and power off cannot be properly implemented if I do not have access to control gpio/ regulator and timer
 pub trait SdmmcHardware {
-    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<MmcPowerMode, SdmmcError> {
+    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
 
