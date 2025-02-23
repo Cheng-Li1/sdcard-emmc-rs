@@ -221,7 +221,7 @@ impl SdmmcMesonHardware {
     /// The meson_reset function reset the host register state
     /// However, this function does not try to reset the power state like operating voltage and signal voltage
     fn meson_reset(&mut self) {
-        self.sdmmc_set_power(MmcPowerMode::On);
+        let _ = self.sdmmc_set_power(MmcPowerMode::On);
 
         // Stop execution
         unsafe {

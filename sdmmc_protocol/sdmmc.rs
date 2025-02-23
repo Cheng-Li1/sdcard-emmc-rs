@@ -58,6 +58,7 @@ pub enum SdmmcError {
     // The block transfer succeed, but fail to stop the read/write process
     ESTOPCMD,
     ENOCARD,
+    ECARDINACTIVE,
 }
 
 // Define the MMC response flags
@@ -268,31 +269,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         })
     }
 
-    // Funtion that is not completed
-    pub fn setup_card(&mut self) -> Result<(), SdmmcError> {
-        // Disable all irqs here
-        self.hardware.sdmmc_config_interrupt(false, false)?;
-
-        // TODO: Different sdcard and eMMC support different voltages, figure those out
-        if self.mmc_ios.power_mode != MmcPowerMode::On {
-            self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
-            // TODO: Right now we know the power will always be up and this function should not be called
-            // But when we encounter scenerio that may actually call this function, we should wait for the time specified in ios
-            // Right now this whole power up related thing does not work
-            process_wait_unreliable(self.mmc_ios.power_delay_ms as u64 * 1000000);
-
-            self.mmc_ios.power_mode = MmcPowerMode::On;
-        }
-
-        let clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
-
-        self.mmc_ios.clock = clock;
-
-        // This line of code may not be needed?
-        self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width1)?;
-
-        self.mmc_ios.bus_width = MmcBusWidth::Width1;
-
+    fn sdcard_init(&mut self, voltage_switch: bool) -> Result<(), SdmmcError> {
         let mut resp: [u32; 4] = [0; 4];
 
         let mut cmd = SdmmcCmd {
@@ -301,11 +278,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0,
         };
 
-        // This command does not expect a response
+        // Go idle command does not expect a response
         self.hardware.sdmmc_send_command(&cmd, None)?;
 
-        // TODO: figuring out the optimal delay
-        process_wait_unreliable(10000000);
+        // Linux use 1ms delay here, we use 2ms
+        process_wait_unreliable(2_000_000);
 
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
@@ -319,29 +296,12 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // If the result is error, it is either the voltage not being set up correctly, which mean a bug in hardware layer
         // or the card is eMMC or legacy sdcard
         // For now, we only deal with the situation it is a sdcard
-        if res.is_ok() && resp[0] == 0x1AA {
-            let card: Sdcard = self.setup_sdcard_cont()?;
-            self.mmc_device = Some(MmcDevice::Sdcard(card));
-            Ok(())
-        } else {
-            // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
-            debug_log!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!");
-            Err(SdmmcError::EUNSUPPORTEDCARD)
+        if res.is_ok() && resp[0] != 0x1AA {
+            return Err(SdmmcError::EUNSUPPORTEDCARD);
         }
-    }
 
-    /// From uboot
-    /// Most cards do not answer if some reserved bits
-    /// in the ocr are set. However, Some controller
-    /// can set bit 7 (reserved for low voltages), but
-    /// how to manage low voltages SD card is not yet
-    /// specified.
-    /// Check mmc_sd_get_cid() in Linux for card init process
-    fn setup_sdcard_cont(&mut self) -> Result<Sdcard, SdmmcError> {
-        let mut cmd: SdmmcCmd;
-        let mut resp: [u32; 4] = [0; 4];
         // Uboot define this value to 1000...
-        let mut timeout: u16 = 1000;
+        let mut retry: u16 = 1000;
 
         loop {
             debug_log!("Sending SD_CMD_APP_SEND_OP_COND!");
@@ -353,7 +313,13 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             };
 
             // Send CMD55
-            Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+            let res = Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp);
+            
+            match res {
+                Ok(_) => {},
+                Err(SdmmcError::ETIMEDOUT) => return Err(SdmmcError::EUNSUPPORTEDCARD),
+                Err(_) => return res,
+            }
 
             cmd = SdmmcCmd {
                 cmdidx: SD_CMD_APP_SEND_OP_COND,
@@ -391,28 +357,113 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 break;
             }
 
-            // Timeout handling
-            if timeout <= 0 {
-                debug_log!("SDMMC: Setting voltage failed, card not supported!");
+            // retry handling
+            if retry <= 0 {
+                debug_log!("SDMMC: SEND_OP_COND failed, card not supported!");
                 return Err(SdmmcError::EUNSUPPORTEDCARD);
             }
-            timeout -= 1;
+            retry -= 1;
         }
 
         // TODO: Add check here to return error when enocounter SDSC card
         if self
-            .host_capability
-            .contains(sdmmc_capability::SdmmcHostCapability(
-                MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
-            ))
-        {
+        .host_capability
+        .contains(sdmmc_capability::SdmmcHostCapability(MMC_TIMING_UHS_SDR12)) && voltage_switch == true {
             // TODO: If the sdcard fail at this stage, a power circle and reinit should be performed
             self.tune_sdcard_switch_uhs18v()?;
             self.mmc_ios.signal_voltage = MmcSignalVoltage::Voltage180;
         }
+        
+        Ok(())
+    }
 
-        // 4. Send CMD2 to get the CID register
-        cmd = SdmmcCmd {
+    fn sdmmc_power_cycle(&mut self) -> Result<(), SdmmcError> {
+        self.hardware.sdmmc_set_power(MmcPowerMode::Off)?;
+        process_wait_unreliable(5_000_000);
+
+        self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
+        process_wait_unreliable(1_000_000);
+
+        self.mmc_ios.power_mode = MmcPowerMode::On;
+        Ok(())
+    }
+
+    // Funtion that is not completed
+    pub fn setup_card(&mut self) -> Result<(), SdmmcError> {
+        // Disable all irqs here
+        self.hardware.sdmmc_config_interrupt(false, false)?;
+
+        // TODO: Different sdcard and eMMC support different voltages, figure those out
+        if self.mmc_ios.power_mode != MmcPowerMode::On {
+            self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
+            // TODO: Right now we know the power will always be up and this function should not be called
+            // But when we encounter scenerio that may actually call this function, we should wait for the time specified in ios
+            // Right now this whole power up related thing does not work
+            process_wait_unreliable(self.mmc_ios.power_delay_ms as u64 * 1000000);
+
+            self.mmc_ios.power_mode = MmcPowerMode::On;
+        }
+
+        let clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
+
+        self.mmc_ios.clock = clock;
+
+        // This line of code may not be needed?
+        self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width1)?;
+
+        self.mmc_ios.bus_width = MmcBusWidth::Width1;
+
+        let mut voltage_switch: bool = true;
+
+        // Use labeled block here for better clarification
+        // There could be more complex retry logic implemented in the future
+        'sdcard_init: loop {
+            match self.sdcard_init(voltage_switch) {
+                Ok(()) => {},
+                Err(SdmmcError::EUNSUPPORTEDCARD) => {
+                    break 'sdcard_init SdmmcError::EUNSUPPORTEDCARD;
+                },
+                Err(_) => {
+                    if voltage_switch == true {
+                        voltage_switch = false;
+                        // Retry with voltage switch off
+                        self.sdmmc_power_cycle()?;
+                        continue 'sdcard_init;
+                    }
+                    else {
+                        break 'sdcard_init SdmmcError::ECARDINACTIVE;
+                    }
+                }
+            }
+        
+            let card: Sdcard = self.setup_sdcard_cont()?;
+            self.mmc_device = Some(MmcDevice::Sdcard(card));
+            return Ok(());
+        };
+
+        // Unsupported card
+        {
+            // If the result is error, it is either the voltage not being set up correctly, which mean a bug in hardware layer
+            // or the card is eMMC or legacy sdcard
+            // For now, we only deal with the situation it is a sdcard
+            // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
+            debug_log!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!");
+            Err(SdmmcError::EUNSUPPORTEDCARD)
+        }
+    }
+
+    /// From uboot
+    /// Most cards do not answer if some reserved bits
+    /// in the ocr are set. However, Some controller
+    /// can set bit 7 (reserved for low voltages), but
+    /// how to manage low voltages SD card is not yet
+    /// specified.
+    /// Check mmc_sd_get_cid() in Linux for card init process
+    fn setup_sdcard_cont(&mut self) -> Result<Sdcard, SdmmcError> {
+        let mut resp: [u32; 4] = [0; 4];
+
+        // Send CMD2 to get the CID register
+        let mut cmd = SdmmcCmd {
             cmdidx: MMC_CMD_ALL_SEND_CID,
             resp_type: MMC_RSP_R2,
             cmdarg: 0,
@@ -435,7 +486,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp[3]
         );
 
-        // 5. Send CMD3 to set and receive the RCA
+        // Send CMD3 to set and receive the RCA
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_RELATIVE_ADDR,
             resp_type: MMC_RSP_R6,
@@ -448,7 +499,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         debug_log!("RCA: {:04x}\n", rca);
 
-        // 6. Send CMD9 to get the CSD register
+        // Send CMD9 to get the CSD register
         cmd = SdmmcCmd {
             cmdidx: MMC_CMD_SEND_CSD,
             resp_type: MMC_RSP_R2,
@@ -466,7 +517,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         let (csd, card_version) = Csd::new(resp);
 
-        // 7. Send CMD7 to select the card
+        // Send CMD7 to select the card
         cmd = SdmmcCmd {
             cmdidx: MMC_CMD_SELECT_CARD,
             resp_type: MMC_RSP_R1,
@@ -686,24 +737,24 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         if signal & 0xF != 0x0 {
-            return Err(SdmmcError::EUNSUPPORTEDCARD);
+            return Err(SdmmcError::ECARDINACTIVE);
         }
 
         self.hardware
             .sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
 
         // TODO: figuring out the optimal delay
-        process_wait_unreliable(10000000);
+        process_wait_unreliable(10_000_000);
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
         // TODO: figuring out the optimal delay
-        process_wait_unreliable(100000);
+        process_wait_unreliable(100_000);
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
             // TODO: figuring out the optimal delay
-            process_wait_unreliable(100000);
+            process_wait_unreliable(100_000);
             debug_log!("data signal value: 0b{:b}\n", signal);
             if signal & 0xF == 0xF {
                 break;
@@ -711,7 +762,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         if signal & 0xF != 0xF {
-            return Err(SdmmcError::EUNSUPPORTEDCARD);
+            return Err(SdmmcError::ECARDINACTIVE);
         }
 
         Ok(())
@@ -1235,9 +1286,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             return res;
         }
 
+        res = Err(SdmmcError::ETIMEDOUT);
+
         // TODO: Change it to use the sleep function provided by the hardware layer
         // This is a busy poll retry, we could poll infinitely if we trust the device to be correct
-        let mut retry: u32 = 100000000;
+        let mut retry: u32 = 100_000_000;
 
         // sel4_microkit::debug_println!("Request sent! Let us wait!");
 
