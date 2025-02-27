@@ -278,11 +278,15 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0,
         };
 
+        debug_log!("Try to send go idle cmd\n");
+
         // Go idle command does not expect a response
         self.hardware.sdmmc_send_command(&cmd, None)?;
 
         // Linux use 1ms delay here, we use 2ms
         process_wait_unreliable(2_000_000);
+
+        debug_log!("Try to send check operating voltage cmd\n");
 
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
@@ -304,7 +308,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         let mut retry: u16 = 1000;
 
         loop {
-            debug_log!("Sending SD_CMD_APP_SEND_OP_COND!");
+            debug_log!("Sending SD_CMD_APP_SEND_OP_COND!\n");
             // Prepare CMD55 (APP_CMD)
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_APP_CMD,
@@ -328,7 +332,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             };
 
             // Set the HCS bit if version is SD Version 2
-            // Since we are only support SDHC card, the OCR_HCS bit must be supported by the card
+            // Since we are only support SDHC card, the OCR_HCS bit should be supported by the card
             cmd.cmdarg |= OCR_HCS;
 
             // Right now we deliberately not set XPC bit for maximum compatibility
@@ -350,7 +354,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // Send ACMD41
             Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
 
-            debug_log!("OCR: {:08x}", resp[0]);
+            debug_log!("OCR: {:08x}\n", resp[0]);
 
             // Check if card is ready (OCR_BUSY bit)
             if (resp[0] & OCR_BUSY) != 0 {
@@ -359,16 +363,17 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
             // retry handling
             if retry <= 0 {
-                debug_log!("SDMMC: SEND_OP_COND failed, card not supported!");
+                debug_log!("SDMMC: SEND_OP_COND failed, card not supported!\n");
                 return Err(SdmmcError::EUNSUPPORTEDCARD);
             }
             retry -= 1;
         }
 
-        // TODO: Add check here to return error when enocounter SDSC card
+        // Checking if the host and card is eligible for voltage switch
         if self
         .host_capability
-        .contains(sdmmc_capability::SdmmcHostCapability(MMC_TIMING_UHS_SDR12)) && voltage_switch == true {
+        .contains(sdmmc_capability::SdmmcHostCapability(MMC_TIMING_UHS_SDR12)) && voltage_switch == true 
+            && resp[0] & OCR_HCS == OCR_HCS && resp[0] & OCR_S18R == OCR_S18R {
             // TODO: If the sdcard fail at this stage, a power circle and reinit should be performed
             self.tune_sdcard_switch_uhs18v()?;
             self.mmc_ios.signal_voltage = MmcSignalVoltage::Voltage180;
@@ -395,6 +400,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         // TODO: Different sdcard and eMMC support different voltages, figure those out
         if self.mmc_ios.power_mode != MmcPowerMode::On {
+            debug_log!("Turn the power up");
             self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
             // TODO: Right now we know the power will always be up and this function should not be called
             // But when we encounter scenerio that may actually call this function, we should wait for the time specified in ios
@@ -427,6 +433,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                     if voltage_switch == true {
                         voltage_switch = false;
                         // Retry with voltage switch off
+                        debug_log!("Try to init the card without voltage switch\n");
                         self.sdmmc_power_cycle()?;
                         continue 'sdcard_init;
                     }
@@ -447,7 +454,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // or the card is eMMC or legacy sdcard
             // For now, we only deal with the situation it is a sdcard
             // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
-            debug_log!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!");
+            debug_log!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!\n");
             Err(SdmmcError::EUNSUPPORTEDCARD)
         }
     }
@@ -696,11 +703,13 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 }
                 Err(SdmmcError::EIO) => {
                     // If test_sampling fails with EIO, try tuning the sampling point
+                    debug_log!("Try different sampling points\n");
                     self.hardware
                         .sdmmc_tune_sampling(TuningState::TuningContinue)?;
                 }
                 Err(e) => {
                     // If test_sampling fails with an error other than EIO, return that error
+                    debug_log!("Tuning sampling fails\n");
                     return Err(e);
                 }
             }
@@ -762,6 +771,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         if signal & 0xF != 0xF {
+            self.hardware.sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage330)?;
+            process_wait_unreliable(1_000_000);
             return Err(SdmmcError::ECARDINACTIVE);
         }
 
@@ -923,6 +934,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
 
         if let Some((memory, cache_invalidate_function)) = memory_and_invalidate_cache_fn {
+            debug_log!("Checking supported speed classes\n");
             if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
                 match self.mmc_ios.signal_voltage {
                     MmcSignalVoltage::Voltage330 => {
@@ -959,6 +971,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             let mut timing;
             let sdcard_cap: SdcardCapability;
             if let Some(MmcDevice::Sdcard(ref sdcard)) = self.mmc_device {
+                debug_log!("Switch to higher speed class\n");
                 sdcard_cap = sdcard.card_cap.clone();
                 timing = sdcard.card_state.timing;
                 // This 'tune_speed thing is a feature called labeled block in Rust

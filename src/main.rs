@@ -98,21 +98,8 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
 
     let _ = sdmmc_host.config_interrupt(false, false);
 
-    /*
-    unsafe {
-        unsafe_stolen_memory[0] = 1;
-        unsafe_stolen_memory[10] = 64;
-        unsafe_stolen_memory[53] = 98;
-
-        debug_println!("printing out memory have value written in it");
-
-        print_one_block(unsafe_stolen_memory.as_ptr(), 512);
-
-        assert!(unsafe_stolen_memory[0] == 1);
-        assert!(unsafe_stolen_memory[10] == 64);
-        assert!(unsafe_stolen_memory[53] == 98);
-    }
-    */
+    // Print out one block to check if read works
+    // sdmmc_host.test_read_one_block(0, 0xf5500000);
 
     // TODO: Should tuning be possible to fail?
     sdmmc_host

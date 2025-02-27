@@ -688,7 +688,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
 
         if (status & STATUS_RESP_TIMEOUT) != 0 {
             debug_log!(
-                "SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}",
+                "SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}\n",
                 status
             );
             // This could negatively impact the result of benchmarking in case of cmd error
@@ -700,7 +700,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
 
         if (status & STATUS_ERR_MASK) != 0 {
             debug_log!(
-                "SDMMC: CARD IO ERROR! Host status register: 0x{:08x}",
+                "SDMMC: CARD IO ERROR! Host status register: 0x{:08x}\n",
                 status
             );
             self.meson_wait_desc_stop()?;
@@ -790,6 +790,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         unsafe {
             ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
         }
+
         Ok(())
     }
 
@@ -797,7 +798,24 @@ impl SdmmcHardware for SdmmcMesonHardware {
     // Experimental function that tries to modify the pin that might control the power of the sdcard slot
     // This function should be pretty much the same with sdmmc_set_signal_voltage, the only difference
     // is the pin modified is gpioAO_3, busy wait is needed to be added after setting the power
-    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {
+    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {      
+        /* 
+        unsafe {
+            debug_log!("In set power function\n");
+            let mut value: u32;
+
+            // Read the value using ptr::read_volatile
+            value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
+            debug_log!("Address {:#x}: {:#x}\n", AO_RTI_OUTPUT_ENABLE_REG, value);
+
+            value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
+            debug_log!("Address {:#x}: {:#x}\n", AO_RTI_OUTPUT_LEVEL_REG, value);
+
+            value = ptr::read_volatile(AO_RTI_PULL_UP_EN_REG as *const u32);
+            debug_log!("Address {:#x}: {:#x}\n", AO_RTI_PULL_UP_EN_REG, value);   
+        }
+        */
+
         let mut value: u32;
         unsafe {
             value = ptr::read_volatile(AO_RTI_OUTPUT_ENABLE_REG as *const u32);
@@ -814,8 +832,8 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 unsafe {
                     value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
                 }
-                if value & GPIO_AO_3 != 0 {
-                    value &= !GPIO_AO_3;
+                if value & GPIO_AO_3 == 0 {
+                    value |= GPIO_AO_3;
                     unsafe {
                         ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
                     }
@@ -826,24 +844,14 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 unsafe {
                     value = ptr::read_volatile(AO_RTI_OUTPUT_LEVEL_REG as *const u32);
                 }
-                if value & GPIO_AO_3 == 0 {
-                    value |= GPIO_AO_3;
+                if value & GPIO_AO_3 != 0 {
+                    value &= !GPIO_AO_3;
                     unsafe {
                         ptr::write_volatile(AO_RTI_OUTPUT_LEVEL_REG as *mut u32, value);
                     }
                 }
             }
             _ => return Err(SdmmcError::EINVAL),
-        }
-        // Disable pull-up/down for gpioAO_3
-        unsafe {
-            value = ptr::read_volatile(AO_RTI_PULL_UP_EN_REG as *const u32);
-        }
-        if value & GPIO_AO_3 != 0 {
-            value &= !GPIO_AO_3;
-            unsafe {
-                ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
-            }
         }
         Ok(())
     }
