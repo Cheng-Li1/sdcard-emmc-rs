@@ -114,7 +114,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     }
 
     // Should always succeed, at least for odroid C4
-    let _ = sdmmc_host.config_interrupt(false, false);
+    let _ = sdmmc_host.config_interrupt(true, false);
     HandlerImpl {
         future: None,
         sdmmc: Some(sdmmc_host),
