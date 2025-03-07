@@ -103,10 +103,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
 
     // TODO: Should tuning be possible to fail?
     sdmmc_host
-        .tune_performance(Some((
-            unsafe_stolen_memory,
-            dummy_cache_invalidate_function,
-        )))
+        .tune_performance(unsafe_stolen_memory, dummy_cache_invalidate_function)
         .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
 
     unsafe {
