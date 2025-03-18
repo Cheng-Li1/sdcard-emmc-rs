@@ -3,7 +3,7 @@ use core::fmt::{self, Write};
 use sel4_microkit_support::debug_log;
 
 use super::{
-    mmc_struct::{self, MmcBusWidth, MmcState},
+    mmc_struct::{self, BlockTransmissionMode, MmcBusWidth, MmcState},
     sdmmc_capability::SdcardCapability,
     SdmmcError, SdmmcHardware, SdmmcProtocol,
 };
@@ -16,12 +16,14 @@ pub(crate) struct Sdcard {
     pub relative_card_addr: u16,
     pub card_state: MmcState,
     pub card_cap: SdcardCapability,
+    pub method: BlockTransmissionMode,
     pub card_config: Option<Scr>,
 }
 
 /// Placeholder eMMC struct that is not implemented
 pub struct EMmc {
     pub card_id: u128,
+    pub method: BlockTransmissionMode,
 }
 
 // Beware this struct is meant to track the cmd set that the sdcard should support
@@ -194,16 +196,16 @@ impl Csd {
 
 pub struct Scr {
     // Not extracted from Scr parsing yet
-    sd_spec: u32,
-    data_stat_after_erase: bool,
+    pub sd_spec: u32,
+    pub data_stat_after_erase: bool,
     // Not extracted from Scr parsing yet
     sd_security: u8,
-    sd_bus_width: MmcBusWidth,
-    support_speed_class_control: bool,
-    support_set_block_count: bool,
-    support_extersion_register_single_block: bool,
-    support_extersion_register_multi_block: bool,
-    support_security_transmission: bool,
+    pub sd_bus_width: MmcBusWidth,
+    pub support_speed_class_control: bool,
+    pub support_set_block_count: bool,
+    pub support_extersion_register_single_block: bool,
+    pub support_extersion_register_multi_block: bool,
+    pub support_security_transmission: bool,
 }
 
 impl Scr {

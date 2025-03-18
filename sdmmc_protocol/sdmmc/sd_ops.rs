@@ -1,4 +1,3 @@
-
 use crate::sdmmc_traits::SdmmcHardware;
 
 use super::{
@@ -45,10 +44,11 @@ impl Sdcard {
 
         // The sdcard register data is always in big endian format
         // Now we construct the last 32 bits of the scr register
-        let scr_raw: u64 = (((memory[0] as u64) << 24) 
-            + ((memory[1] as u64) << 16) 
-            + ((memory[2] as u64) << 8) 
-            + (memory[3] as u64)) << 32;
+        let scr_raw: u64 = (((memory[0] as u64) << 24)
+            + ((memory[1] as u64) << 16)
+            + ((memory[2] as u64) << 8)
+            + (memory[3] as u64))
+            << 32;
 
         let scr: Scr = Scr::new(scr_raw)?;
 

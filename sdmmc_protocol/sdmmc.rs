@@ -4,7 +4,7 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
-use mmc_struct::{MmcBusWidth, MmcDevice, MmcState, MmcTiming, TuningState};
+use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming, TuningState};
 use sdcard::{Cid, Csd, Scr, Sdcard};
 use sdmmc_capability::{
     SdcardCapability, SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_EMPTY_CAP,
@@ -566,6 +566,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             relative_card_addr: rca,
             card_state,
             card_cap: sdmmc_capability::SdcardCapability(MMC_EMPTY_CAP),
+            method: BlockTransmissionMode::StopTransmission,
             card_config: None,
         })
     }
@@ -613,6 +614,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
     ///
     /// # Returns
     /// - `Result<(), SdmmcError>`: `Ok(())` if tuning was successful, or an error otherwise.
+    /// UB here waiting to be fixed: memory being a mutable reference is also accessed by DMA
     pub fn tune_performance(
         &mut self,
         memory: &mut [u8; 64],
@@ -847,7 +849,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         let mut resp: [u32; 4] = [0; 4];
 
         let mut card_cap: SdcardCapability = sdmmc_capability::SdcardCapability(MMC_EMPTY_CAP);
-        let cmd = SdmmcCmd {
+        let cmd: SdmmcCmd = SdmmcCmd {
             cmdidx: SD_CMD_SWITCH_FUNC,
             resp_type: MMC_RSP_R1,
             cmdarg: 0x00FFFFFF,
@@ -901,13 +903,19 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         let mut resp: [u32; 4] = [0; 4];
 
         if let Some(MmcDevice::Sdcard(ref mut sdcard)) = &mut self.mmc_device {
-            Sdcard::sdcard_get_configuration_register(
+            let scr: Scr = Sdcard::sdcard_get_configuration_register(
                 &mut self.hardware,
                 memory.as_ptr() as u64,
                 memory,
                 cache_invalidate_function,
                 sdcard.relative_card_addr,
             )?;
+
+            if scr.support_set_block_count {
+                sdcard.method = BlockTransmissionMode::SetBlockCount;
+            }
+
+            sdcard.card_config = Some(scr);
         }
 
         if self.mmc_ios.bus_width == MmcBusWidth::Width1
@@ -1121,12 +1129,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 resp_type: MMC_RSP_R1,
                 cmdarg: cmd_arg as u32,
             };
-            let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, Some(&data), &mut resp);
-            res = future.await;
-
-            // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
-            // for read/write requests?
-            let _ = self.hardware.sdmmc_ack_interrupt();
+            res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp).await;
 
             return (res, self);
         } else {
@@ -1135,13 +1138,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 resp_type: MMC_RSP_R1,
                 cmdarg: cmd_arg as u32,
             };
-            let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, Some(&data), &mut resp);
-            res = future.await;
 
-            // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
-            // for read/write requests?
-            // Should I use if statement to check whether to ack irq or not based on if irq is enabled or not?
-            let _ = self.hardware.sdmmc_ack_interrupt();
+            res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp).await;
 
             if let Ok(()) = res {
                 // Uboot code for determine response type in this case
@@ -1152,12 +1150,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                     resp_type: MMC_RSP_R1B,
                     cmdarg: 0,
                 };
-                let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, None, &mut resp);
-                res = future.await;
 
-                // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
-                // for read/write requests?
-                let _ = self.hardware.sdmmc_ack_interrupt();
+                res = Self::sdmmc_async_request(&mut self.hardware, &cmd, None, &mut resp).await;
 
                 return (res.map_err(|_| SdmmcError::ESTOPCMD), self);
             } else {
@@ -1175,8 +1169,20 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         start_idx: u64,
         source: u64,
     ) -> (Result<(), SdmmcError>, SdmmcProtocol<T>) {
-        let mut cmd: SdmmcCmd;
-        let mut res: Result<(), SdmmcError>;
+        let trans_meth: BlockTransmissionMode = {
+            if let Some(ref device) = self.mmc_device {
+                match device {
+                    MmcDevice::Sdcard(sdcard) => sdcard.method.clone(),
+                    MmcDevice::EMmc(emmc) => emmc.method.clone(),
+                    MmcDevice::Unknown => return (Err(SdmmcError::EUNSUPPORTEDCARD), self),
+                }
+            } else {
+                return (Err(SdmmcError::ENOCARD), self);
+            }
+        };
+
+        let cmd: SdmmcCmd;
+        let res: Result<(), SdmmcError>;
         // TODO: Figure out a way to support cards with 4 KB sector size
         let data: MmcData = MmcData {
             blocksize: 512,
@@ -1194,50 +1200,29 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 resp_type: MMC_RSP_R1,
                 cmdarg: cmd_arg as u32,
             };
-            let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, Some(&data), &mut resp);
-            res = future.await;
-
-            // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
-            // for read/write requests?
-            let _ = self.hardware.sdmmc_ack_interrupt();
+            res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp).await;
 
             return (res, self);
         } else {
             // TODO: Add if here to determine if the card support cmd23 or not to determine to use cmd23 or cmd12
             // Set the expected number of blocks
+
             cmd = SdmmcCmd {
-                cmdidx: MMC_CMD_SET_BLOCK_COUNT,
+                cmdidx: MMC_CMD_WRITE_MULTIPLE_BLOCK,
                 resp_type: MMC_RSP_R1,
-                cmdarg: blockcnt, // block count for the upcoming CMD25 operation
+                cmdarg: cmd_arg as u32,
             };
 
-            let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, None, &mut resp);
-            res = future.await;
+            res = Self::sdmmc_write_multi_blocks(
+                &mut self.hardware,
+                &cmd,
+                &data,
+                &mut resp,
+                trans_meth,
+            )
+            .await;
 
-            // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
-            // for read/write requests?
-            let _ = self.hardware.sdmmc_ack_interrupt();
-
-            if let Ok(()) = res {
-                // Uboot code for determine response type in this case
-                // cmd.resp_type = (IS_SD(mmc) || write) ? MMC_RSP_R1b : MMC_RSP_R1;
-                // TODO: Add mmc checks here
-                cmd = SdmmcCmd {
-                    cmdidx: MMC_CMD_WRITE_MULTIPLE_BLOCK,
-                    resp_type: MMC_RSP_R1,
-                    cmdarg: cmd_arg as u32,
-                };
-                let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, Some(&data), &mut resp);
-                res = future.await;
-
-                // TODO: Figure out a generic model for every sd controller, like what if the sd controller only send interrupt
-                // for read/write requests?
-                let _ = self.hardware.sdmmc_ack_interrupt();
-
-                return (res.map_err(|_| SdmmcError::ESTOPCMD), self);
-            } else {
-                return (res, self);
-            }
+            return (res, self);
         }
     }
 
@@ -1259,9 +1244,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: start_idx as u32,
         };
 
-        let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, None, &mut resp);
-
-        res = future.await;
+        res = Self::sdmmc_async_request(&mut self.hardware, &cmd, None, &mut resp).await;
 
         if let Err(_) = res {
             return (res, self);
@@ -1273,9 +1256,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: end_idx as u32,
         };
 
-        let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, None, &mut resp);
-
-        res = future.await;
+        res = Self::sdmmc_async_request(&mut self.hardware, &cmd, None, &mut resp).await;
 
         if let Err(_) = res {
             return (res, self);
@@ -1287,9 +1268,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: SD_ERASE_ARG,
         };
 
-        let future = SdmmcCmdFuture::new(&mut self.hardware, &cmd, None, &mut resp);
-
-        res = future.await;
+        res = Self::sdmmc_async_request(&mut self.hardware, &cmd, None, &mut resp).await;
 
         return (res, self);
     }
@@ -1300,7 +1279,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         data: Option<&MmcData>,
         resp: &mut [u32; 4],
     ) -> Result<(), SdmmcError> {
-        // TODO: Add temporarily disable interrupt here
+        // TODO: Maybe should temporarily disable interrupt here??
 
         // Send the command using the hardware layer
         let mut res = hardware.sdmmc_send_command(cmd, data);
@@ -1337,16 +1316,68 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // TODO: Add renable interrupt here
         res // Return the final result (Ok or Err)
     }
+
+    /// Function to execute one sdmmc request asynchronously
+    /// The resp could be used for future error parsing
+    async fn sdmmc_async_request(
+        hardware: &mut T,
+        cmd: &SdmmcCmd,
+        data: Option<&MmcData>,
+        resp: &mut [u32; 4],
+    ) -> Result<(), SdmmcError> {
+        // Send the command to the host sdcard
+        hardware.sdmmc_send_command(cmd, data)?;
+        // Wait until sdcard return the result to the driver
+        let res: Result<(), SdmmcError> = SdmmcCmdFuture::new(hardware, cmd, resp).await;
+        // Acknowledge interrupts
+        hardware.sdmmc_ack_interrupt()?;
+
+        res
+    }
+
+    async fn sdmmc_write_multi_blocks(
+        hardware: &mut T,
+        request_cmd: &SdmmcCmd,
+        data: &MmcData,
+        resp: &mut [u32; 4],
+        transmission_mode: BlockTransmissionMode,
+    ) -> Result<(), SdmmcError> {
+        match transmission_mode {
+            BlockTransmissionMode::SetBlockCount => {
+                let cmd: SdmmcCmd = SdmmcCmd {
+                    cmdidx: MMC_CMD_SET_BLOCK_COUNT,
+                    resp_type: MMC_RSP_R1,
+                    cmdarg: data.blockcnt, // block count for the upcoming CMD25 operation
+                };
+
+                Self::sdmmc_async_request(hardware, &cmd, None, resp).await?;
+
+                Self::sdmmc_async_request(hardware, &request_cmd, Some(&data), resp).await
+            }
+            BlockTransmissionMode::StopTransmission => {
+                Self::sdmmc_async_request(hardware, &request_cmd, Some(&data), resp).await?;
+
+                // Uboot code for determine response type in this case
+                // cmd.resp_type = (IS_SD(mmc) || write) ? MMC_RSP_R1b : MMC_RSP_R1;
+                // TODO: Add mmc checks here
+                let cmd: SdmmcCmd = SdmmcCmd {
+                    cmdidx: MMC_CMD_STOP_TRANSMISSION,
+                    resp_type: MMC_RSP_R1B,
+                    cmdarg: 0,
+                };
+
+                Self::sdmmc_async_request(hardware, &cmd, None, resp).await
+            }
+            BlockTransmissionMode::AutoStop => {
+                Self::sdmmc_async_request(hardware, &request_cmd, Some(&data), resp).await
+            }
+        }
+    }
 }
 
 enum CmdState {
-    // Currently sending the command
-    // State at the start
-    NotSent,
     // Waiting for the response
     WaitingForResponse,
-    // Error encountered
-    Error,
     // Finished
     Finished,
 }
@@ -1354,7 +1385,6 @@ enum CmdState {
 pub struct SdmmcCmdFuture<'a, 'b, 'c> {
     hardware: &'a mut dyn SdmmcHardware,
     cmd: &'b SdmmcCmd,
-    data: Option<&'b MmcData>,
     waker: Option<Waker>,
     state: CmdState,
     response: &'c mut [u32; 4],
@@ -1364,15 +1394,13 @@ impl<'a, 'b, 'c> SdmmcCmdFuture<'a, 'b, 'c> {
     pub fn new(
         hardware: &'a mut dyn SdmmcHardware,
         cmd: &'b SdmmcCmd,
-        data: Option<&'b MmcData>,
         response: &'c mut [u32; 4],
     ) -> SdmmcCmdFuture<'a, 'b, 'c> {
         SdmmcCmdFuture {
             hardware,
             cmd,
-            data,
             waker: None,
-            state: CmdState::NotSent,
+            state: CmdState::WaitingForResponse,
             response,
         }
     }
@@ -1383,7 +1411,6 @@ impl<'a, 'b, 'c> SdmmcCmdFuture<'a, 'b, 'c> {
 /// We actually do not need an executor to execute the request
 /// The context can be ignored unless someone insist to use an executor for the requests
 /// So for now, the context is being stored in waker but this waker will not be used
-/// Beside, we are in no std environment and can barely use any locks
 impl<'a, 'b, 'c> Future for SdmmcCmdFuture<'a, 'b, 'c> {
     type Output = Result<(), SdmmcError>;
 
@@ -1395,26 +1422,8 @@ impl<'a, 'b, 'c> Future for SdmmcCmdFuture<'a, 'b, 'c> {
         self.waker = Some(cx.waker().clone());
 
         match self.state {
-            CmdState::NotSent => {
-                let res: Result<(), SdmmcError>;
-                {
-                    let this: &mut SdmmcCmdFuture<'a, 'b, 'c> = self.as_mut().get_mut();
-
-                    // Now, you can pass `&SdmmcCmd` to `sdmmc_send_command`
-                    let cmd: &SdmmcCmd = this.cmd;
-                    let data: Option<&MmcData> = this.data;
-                    res = this.hardware.sdmmc_send_command(cmd, data);
-                }
-                if let Ok(()) = res {
-                    self.state = CmdState::WaitingForResponse;
-                    return Poll::Pending;
-                } else {
-                    self.state = CmdState::Error;
-                    return Poll::Ready(res);
-                }
-            }
             CmdState::WaitingForResponse => {
-                let res;
+                let res: Result<(), SdmmcError>;
                 {
                     let this: &mut SdmmcCmdFuture<'a, 'b, 'c> = self.as_mut().get_mut();
                     let cmd: &SdmmcCmd = this.cmd;
@@ -1424,15 +1433,12 @@ impl<'a, 'b, 'c> Future for SdmmcCmdFuture<'a, 'b, 'c> {
                 }
                 if let Err(SdmmcError::EBUSY) = res {
                     return Poll::Pending;
-                } else if let Ok(()) = res {
-                    self.state = CmdState::Finished;
-                    return Poll::Ready(res);
                 } else {
-                    self.state = CmdState::Error;
+                    self.state = CmdState::Finished;
                     return Poll::Ready(res);
                 }
             }
-            CmdState::Error => return Poll::Ready(Err(SdmmcError::EUNDEFINED)),
+            // Despite the status is ready, the state machine get polled again
             CmdState::Finished => return Poll::Ready(Err(SdmmcError::EUNDEFINED)),
         }
     }

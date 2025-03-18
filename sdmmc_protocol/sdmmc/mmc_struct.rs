@@ -84,3 +84,13 @@ enum CardState {
     Disconnect,
     Unknown,
 }
+
+#[derive(Debug, Clone)]
+pub enum BlockTransmissionMode {
+    // Using set block count cmd for multiblock transfer
+    SetBlockCount = 0,
+    // Using stop transmission count cmd for multiblock transfer
+    StopTransmission = 1,
+    // Host automatically send stop command without the need to driver interference
+    AutoStop = 2,
+}

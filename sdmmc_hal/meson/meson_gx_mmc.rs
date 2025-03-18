@@ -198,8 +198,12 @@ struct DelayConfig {
 pub struct SdmmcMesonHardware {
     register: &'static mut MesonSdmmcRegisters,
     delay: Option<DelayConfig>,
+    // Current timing
     timing: MmcTiming,
+    // Current frequency
     frequency: u32,
+    // Irq enabled
+    enabled_irq: u32,
     // Put other variables here
 }
 
@@ -215,6 +219,7 @@ impl SdmmcMesonHardware {
             timing: MmcTiming::SdHs,
             // Wrong value but should not have much impact
             frequency: MESON_MIN_FREQUENCY,
+            enabled_irq: 0,
         }
     }
 
@@ -733,12 +738,15 @@ impl SdmmcHardware for SdmmcMesonHardware {
         unsafe {
             ptr::write_volatile(&mut self.register.irq_en, irq_bits_to_set);
         }
+        self.enabled_irq = irq_bits_to_set;
         return Ok(());
     }
 
     fn sdmmc_ack_interrupt(&mut self) -> Result<(), SdmmcError> {
-        unsafe {
-            ptr::write_volatile(&mut self.register.status, IRQ_END_OF_CHAIN | IRQ_ERR_MASK | IRQ_SDIO);
+        if self.enabled_irq != 0 {
+            unsafe {
+                ptr::write_volatile(&mut self.register.status, self.enabled_irq);
+            }
         }
         return Ok(());
     }
