@@ -75,15 +75,14 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     }
     let meson_hal: SdmmcMesonHardware = unsafe { SdmmcMesonHardware::new() };
 
-    let unsafe_stolen_memory: &mut [u8; 64];
+    let unsafe_stolen_memory: *mut [u8; 64];
+    let physical_memory_addr: u64;
 
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
-    unsafe {
-        let stolen_memory_addr = 0xf5500000 as *mut [u8; 64];
-        assert!(stolen_memory_addr as usize % 8 == 0);
-        unsafe_stolen_memory = &mut (*stolen_memory_addr);
-    }
+    unsafe_stolen_memory = 0xf5500000 as *mut [u8; 64];
+    physical_memory_addr = 0xf5500000;
+    assert!(physical_memory_addr as usize % 8 == 0);
 
     // Handling result in two different ways, by matching and unwrap_or_else
     let res = SdmmcProtocol::new(meson_hal);
@@ -101,13 +100,18 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     // Print out one block to check if read works
     // sdmmc_host.test_read_one_block(0, 0xf5500000);
 
-    // TODO: Should tuning be possible to fail?
-    sdmmc_host
-        .tune_performance(unsafe_stolen_memory, dummy_cache_invalidate_function)
-        .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
+    unsafe {
+        sdmmc_host
+            .tune_performance(
+                unsafe_stolen_memory,
+                dummy_cache_invalidate_function,
+                physical_memory_addr,
+            )
+            .unwrap_or_else(|error| panic!("SDMMC: Error at tuning performance {:?}", error));
+    }
 
     unsafe {
-        print_one_block(unsafe_stolen_memory.as_ptr(), 64);
+        print_one_block(unsafe_stolen_memory as *const u8, 64);
     }
 
     // Should always succeed, at least for odroid C4

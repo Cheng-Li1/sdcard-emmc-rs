@@ -7,10 +7,11 @@ use super::{
 };
 
 impl Sdcard {
-    pub fn sdcard_get_configuration_register<T: SdmmcHardware>(
+    /// Unsafe because dereference raw pointer
+    pub unsafe fn sdcard_get_configuration_register<T: SdmmcHardware>(
         hardware: &mut T,
         physical_memory: u64,
-        memory: &mut [u8; 64],
+        raw_memory: *mut [u8; 64],
         invalidate_cache_fn: fn(),
         rca: u16,
     ) -> Result<Scr, SdmmcError> {
@@ -40,15 +41,17 @@ impl Sdcard {
 
         // print out the content of the SCR register
         sel4_microkit_support::debug_log!("SCR register content: ");
-        unsafe { crate::sdmmc::print_one_block(memory.as_ptr(), 8) };
+        unsafe { crate::sdmmc::print_one_block(raw_memory as *const u8, 8) };
 
         // The sdcard register data is always in big endian format
         // Now we construct the last 32 bits of the scr register
-        let scr_raw: u64 = (((memory[0] as u64) << 24)
-            + ((memory[1] as u64) << 16)
-            + ((memory[2] as u64) << 8)
-            + (memory[3] as u64))
-            << 32;
+        let scr_raw: u64 = unsafe {
+            ((((*raw_memory)[0] as u64) << 24)
+                + (((*raw_memory)[1] as u64) << 16)
+                + (((*raw_memory)[2] as u64) << 8)
+                + ((*raw_memory)[3] as u64))
+                << 32
+        };
 
         let scr: Scr = Scr::new(scr_raw)?;
 
