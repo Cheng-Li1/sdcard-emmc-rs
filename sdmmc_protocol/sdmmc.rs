@@ -906,6 +906,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
     }
 
     /// Since we are using u8 here, the endianness does matter
+    /// I should change the process of access raw memory to using volatile read
     fn tune_sdcard_performance(
         &mut self,
         memory: *mut [u8; 64],
@@ -1076,7 +1077,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             self.mmc_ios.clock = self.hardware.sdmmc_config_timing(target_timing)?;
             self.process_sampling(physical_memory_addr, cache_invalidate_function)?;
 
-            debug_log!("Current frequency: {}Hz", self.mmc_ios.clock);
+            debug_log!("Current frequency: {}Hz\n", self.mmc_ios.clock);
         } else {
             return Err(SdmmcError::EUNDEFINED);
         }
@@ -1130,12 +1131,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // For now we default to assume the card is high_capacity
         // TODO: Fix it when we properly implement card boot up
         // TODO: If we boot the card by ourself or reset the card, remember to send block len cmd
-        let cmd_arg: u64 = start_idx;
         if blockcnt == 1 {
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_READ_SINGLE_BLOCK,
                 resp_type: MMC_RSP_R1,
-                cmdarg: cmd_arg as u32,
+                cmdarg: start_idx as u32,
             };
             res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp).await;
 
@@ -1144,7 +1144,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_READ_MULTIPLE_BLOCK,
                 resp_type: MMC_RSP_R1,
-                cmdarg: cmd_arg as u32,
+                cmdarg: start_idx as u32,
             };
 
             res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp).await;
@@ -1201,12 +1201,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         let mut resp: [u32; 4] = [0; 4];
         // TODO: Add more validation check in the future
 
-        let cmd_arg: u64 = start_idx;
         if blockcnt == 1 {
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_WRITE_SINGLE_BLOCK,
                 resp_type: MMC_RSP_R1,
-                cmdarg: cmd_arg as u32,
+                cmdarg: start_idx as u32,
             };
             res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp).await;
 
@@ -1218,7 +1217,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_WRITE_MULTIPLE_BLOCK,
                 resp_type: MMC_RSP_R1,
-                cmdarg: cmd_arg as u32,
+                cmdarg: start_idx as u32,
             };
 
             res = Self::sdmmc_write_multi_blocks(
@@ -1343,6 +1342,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         res
     }
 
+    /// Change this function so that if a request report back error
+    /// MMC_CMD_STOP_TRANSMISSION must be sent in the end so the card
+    /// stop transmission correctly
     async fn sdmmc_write_multi_blocks(
         hardware: &mut T,
         request_cmd: &SdmmcCmd,

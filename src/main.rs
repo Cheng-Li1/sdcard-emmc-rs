@@ -73,7 +73,8 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     unsafe {
         blk_queue_init_helper();
     }
-    let meson_hal: SdmmcMesonHardware = unsafe { SdmmcMesonHardware::new(sdmmc_hal::meson_gx_mmc::SDIO_BASE) };
+    let meson_hal: SdmmcMesonHardware =
+        unsafe { SdmmcMesonHardware::new(sdmmc_hal::meson_gx_mmc::SDIO_BASE) };
 
     let unsafe_stolen_memory: *mut [u8; 64];
     let physical_memory_addr: u64;

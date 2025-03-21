@@ -697,6 +697,11 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 "SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}\n",
                 status
             );
+            // For debug
+            debug_log!("SDMMC: Print out error request:\n");
+            debug_log!("cmd idx: {}\n", cmd.cmdidx);
+            debug_log!("cmd arg: {}\n", cmd.cmdarg);
+
             // This could negatively impact the result of benchmarking in case of cmd error
             self.meson_wait_desc_stop()?;
             return Err(SdmmcError::ETIMEDOUT);
@@ -709,6 +714,11 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 "SDMMC: CARD IO ERROR! Host status register: 0x{:08x}\n",
                 status
             );
+            // For debug
+            debug_log!("SDMMC: Print out error request:\n");
+            debug_log!("cmd idx: {}\n", cmd.cmdidx);
+            debug_log!("cmd arg: {}\n", cmd.cmdarg);
+            
             self.meson_wait_desc_stop()?;
             return_val = Err(SdmmcError::EIO);
         }
