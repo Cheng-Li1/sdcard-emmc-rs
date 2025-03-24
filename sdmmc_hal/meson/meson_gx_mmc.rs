@@ -292,6 +292,9 @@ impl SdmmcMesonHardware {
                 meson_mmc_cmd |= CMD_CFG_RESP_128;
             }
 
+            // If the hardware does not have busy detection, polling for card datalines to be high is needed
+            // as the card will signal "busy" (by pulling the DAT line low)
+            // Odroid C4 have feature to wait until hardware exit busy state so we do not need to worry about it
             if cmd.resp_type & MMC_RSP_BUSY != 0 {
                 meson_mmc_cmd |= CMD_CFG_R1B;
             }

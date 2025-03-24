@@ -1108,8 +1108,21 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         start_idx: u64,
         destination: u64,
     ) -> (Result<(), SdmmcError>, SdmmcProtocol<T>) {
-        let mut cmd: SdmmcCmd;
-        let mut res: Result<(), SdmmcError>;
+        let trans_meth: BlockTransmissionMode = {
+            if let Some(ref device) = self.mmc_device {
+                match device {
+                    MmcDevice::Sdcard(sdcard) => sdcard.method.clone(),
+                    MmcDevice::EMmc(emmc) => emmc.method.clone(),
+                    MmcDevice::Unknown => return (Err(SdmmcError::EUNSUPPORTEDCARD), self),
+                }
+            } else {
+                return (Err(SdmmcError::ENOCARD), self);
+            }
+        };
+
+        let cmd: SdmmcCmd;
+        let res: Result<(), SdmmcError>;
+
         // TODO: Figure out a way to support cards with 4 KB sector size
         let data: MmcData = MmcData {
             blocksize: 512,
@@ -1118,6 +1131,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             addr: destination,
         };
         let mut resp: [u32; 4] = [0; 4];
+
         // TODO: Add more validation check in the future
         // Like sdmmc card usually cannot transfer arbitrary number of blocks at once
 
@@ -1141,30 +1155,20 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
             return (res, self);
         } else {
+            // TODO: Add if here to determine if the card support cmd23 or not to determine to use cmd23 or cmd12
+            // Set the expected number of blocks
+
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_READ_MULTIPLE_BLOCK,
                 resp_type: MMC_RSP_R1,
                 cmdarg: start_idx as u32,
             };
 
-            res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp).await;
+            res =
+                Self::sdmmc_multi_blocks_io(&mut self.hardware, &cmd, &data, &mut resp, trans_meth)
+                    .await;
 
-            if let Ok(()) = res {
-                // Uboot code for determine response type in this case
-                // cmd.resp_type = (IS_SD(mmc) || write) ? MMC_RSP_R1b : MMC_RSP_R1;
-                // TODO: Add mmc checks here
-                cmd = SdmmcCmd {
-                    cmdidx: MMC_CMD_STOP_TRANSMISSION,
-                    resp_type: MMC_RSP_R1B,
-                    cmdarg: 0,
-                };
-
-                res = Self::sdmmc_async_request(&mut self.hardware, &cmd, None, &mut resp).await;
-
-                return (res.map_err(|_| SdmmcError::ESTOPCMD), self);
-            } else {
-                return (res, self);
-            }
+            return (res, self);
         }
     }
 
@@ -1220,14 +1224,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 cmdarg: start_idx as u32,
             };
 
-            res = Self::sdmmc_write_multi_blocks(
-                &mut self.hardware,
-                &cmd,
-                &data,
-                &mut resp,
-                trans_meth,
-            )
-            .await;
+            res =
+                Self::sdmmc_multi_blocks_io(&mut self.hardware, &cmd, &data, &mut resp, trans_meth)
+                    .await;
 
             return (res, self);
         }
@@ -1345,7 +1344,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
     /// Change this function so that if a request report back error
     /// MMC_CMD_STOP_TRANSMISSION must be sent in the end so the card
     /// stop transmission correctly
-    async fn sdmmc_write_multi_blocks(
+    async fn sdmmc_multi_blocks_io(
         hardware: &mut T,
         request_cmd: &SdmmcCmd,
         data: &MmcData,
