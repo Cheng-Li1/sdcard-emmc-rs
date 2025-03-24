@@ -158,6 +158,10 @@ pub trait SdmmcHardware {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
 
+    fn sdmmc_host_reset(&mut self) -> Result<(), SdmmcError> {
+        return Err(SdmmcError::ENOTIMPLEMENTED);
+    }
+
     fn sdmmc_do_request(
         &mut self,
         cmd: &SdmmcCmd,

@@ -422,7 +422,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // TODO: Right now we know the power will always be up and this function should not be called
             // But when we encounter scenerio that may actually call this function, we should wait for the time specified in ios
             // Right now this whole power up related thing does not work
-            process_wait_unreliable(self.mmc_ios.power_delay_ms as u64 * 1000000);
+            process_wait_unreliable(self.mmc_ios.power_delay_ms as u64 * 1_000_000);
 
             self.mmc_ios.power_mode = MmcPowerMode::On;
         }
@@ -449,9 +449,17 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 Err(_) => {
                     if voltage_switch == true {
                         voltage_switch = false;
+
                         // Retry with voltage switch off
                         debug_log!("Try to init the card without voltage switch\n");
                         self.sdmmc_power_cycle()?;
+
+                        self.hardware.sdmmc_host_reset()?;
+
+                        // One bug that does not break anything here is
+                        // sdmmc_host_reset will reset the clock to CardSetup timing and turn off the irq
+                        // But those variable in mmc_ios is not changed accordingly
+
                         continue 'sdcard_init;
                     } else {
                         break 'sdcard_init;
@@ -735,20 +743,22 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R1,
             cmdarg: 0, // Argument for 4-bit mode (0 for 1-bit mode)
         };
+
         Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+
         debug_log!("Switch voltage prepared!\n");
 
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
 
         // TODO: figuring out the optimal delay
-        process_wait_unreliable(100000);
+        process_wait_unreliable(100_000);
 
         let mut signal: u8 = 0xFF;
 
         for _ in 0..100 {
             signal = self.hardware.sdmmc_read_datalanes()?;
             // TODO: figuring out the optimal delay
-            process_wait_unreliable(100000);
+            process_wait_unreliable(100_000);
             debug_log!("data signal value: 0b{:b}\n", signal);
             if signal & 0xF == 0x0 {
                 break;

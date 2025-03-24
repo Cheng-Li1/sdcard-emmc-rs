@@ -227,8 +227,6 @@ impl SdmmcMesonHardware {
     /// The meson_reset function reset the host register state
     /// However, this function does not try to reset the power state like operating voltage and signal voltage
     fn meson_reset(&mut self) {
-        let _ = self.sdmmc_set_power(MmcPowerMode::On);
-
         // Stop execution
         unsafe {
             ptr::write_volatile(&mut self.register.start, 0);
@@ -256,9 +254,7 @@ impl SdmmcMesonHardware {
         }
 
         // Set clock to a low freq
-        if self.sdmmc_config_timing(MmcTiming::CardSetup).is_err() {
-            panic!("Fatal fault in setting frequency when resetting");
-        }
+        let _ = self.sdmmc_config_timing(MmcTiming::CardSetup);
 
         // Reset config register
         let mut cfg: u32 = 0;
@@ -875,6 +871,11 @@ impl SdmmcHardware for SdmmcMesonHardware {
             }
             _ => return Err(SdmmcError::EINVAL),
         }
+        Ok(())
+    }
+
+    fn sdmmc_host_reset(&mut self) -> Result<(), SdmmcError> {
+        Self::meson_reset(self);
         Ok(())
     }
 }
