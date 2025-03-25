@@ -1,12 +1,18 @@
 use core::ptr;
 
-use sdmmc_protocol::{sdmmc::{
-    mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
-    sdmmc_capability::{
-        MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34
+use sdmmc_protocol::{
+    sdmmc::{
+        mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
+        sdcard::Sdcard,
+        sdmmc_capability::{
+            MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY,
+            MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34,
+        },
+        HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
+        SdmmcError,
     },
-    HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError
-    }, sdmmc_os::{debug_log, process_wait_unreliable}, sdmmc_traits::SdmmcHardware
+    sdmmc_os::{debug_log, process_wait_unreliable},
+    sdmmc_traits::SdmmcHardware,
 };
 
 pub const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
@@ -182,7 +188,7 @@ struct MesonSdmmcRegisters {
 }
 
 impl MesonSdmmcRegisters {
-    /// This function is only safe to use if the sdmmc_register_base is the correct memory addr 
+    /// This function is only safe to use if the sdmmc_register_base is the correct memory addr
     /// of the sdmmc register base and accessible for the driver
     unsafe fn new(sdmmc_register_base: u64) -> &'static mut MesonSdmmcRegisters {
         &mut *(sdmmc_register_base as *mut MesonSdmmcRegisters)
@@ -275,6 +281,8 @@ impl SdmmcMesonHardware {
         unsafe {
             ptr::write_volatile(&mut self.register.cfg, cfg);
         }
+
+        self.delay = None;
     }
 
     // This function can be seen as a Rust version of meson_mmc_setup_cmd function in uboot
@@ -408,7 +416,10 @@ impl SdmmcMesonHardware {
     fn meson_wait_desc_stop(&self) -> Result<(), SdmmcError> {
         let mut start_time: u32 = 0;
 
-        while unsafe { ptr::read_volatile(&self.register.status) } & (STATUS_DESC_BUSY | STATUS_BUSY) != 0 {
+        while unsafe { ptr::read_volatile(&self.register.status) }
+            & (STATUS_DESC_BUSY | STATUS_BUSY)
+            != 0
+        {
             if start_time > Self::DESC_STOP_TIMEOUT_NS {
                 return Err(SdmmcError::EUNDEFINED);
             }
@@ -519,6 +530,80 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(())
     }
 
+    fn sdmmc_execute_tuning(&mut self, memory_addr: u64) -> Result<(), SdmmcError> {
+        let mut current_delay: u32 = 0;
+
+        if let Some(ref config) = self.delay {
+            if config.timing == self.timing {
+                current_delay = config.current_delay;
+            }
+        }
+
+        let mut adjust: u32 = SD_EMMC_ADJ_ENABLE;
+        let clk: u32;
+
+        unsafe {
+            clk = ptr::read_volatile(&self.register.clock);
+        }
+
+        let clk_src: u32 = clk & CLK_SRC_MASK;
+
+        let mux_clk_freq: u32 = match clk_src {
+            CLK_SRC_24M => SD_EMMC_CLKSRC_24M,
+            CLK_SRC_DIV2 => SD_EMMC_CLKSRC_DIV2,
+            _ => return Err(SdmmcError::EUNDEFINED),
+        };
+
+        let max_div: u32 = div_round_up!(mux_clk_freq, self.frequency);
+
+        let mut tried_lowest_delay: u32 = current_delay;
+
+        let mut tried_highest_delay: u32 = current_delay;
+
+        let res: Result<(), SdmmcError> = loop {
+            let res: Result<(), SdmmcError> = Sdcard::sdcard_test_tuning(self, memory_addr);
+
+            match res {
+                Ok(_) => {
+                    self.delay = Some(
+                        DelayConfig { timing: self.timing, current_delay, tried_lowest_delay: 0, tried_highest_delay: 0 }
+                    );
+                    break Ok(())
+                },
+                Err(SdmmcError::EIO) => {},
+                Err(_) => {
+                    self.delay = None;
+                    unsafe {
+                        ptr::write_volatile(&mut self.register.adjust, 0);
+                    }
+                    break Err(SdmmcError::EUNSUPPORTEDCARD)
+                },
+            }
+
+            if max_div - tried_highest_delay == 0 {
+                break Err(SdmmcError::EUNSUPPORTEDCARD);
+            }
+
+            // The tuning process start from the current delay in the middle
+            // then approach both ends
+            if max_div - tried_highest_delay >= tried_lowest_delay {
+                tried_highest_delay += 1;
+                current_delay = tried_highest_delay;
+            } else {
+                tried_lowest_delay -= 1;
+                current_delay = tried_lowest_delay;
+            }
+    
+            adjust |= (current_delay << SD_EMMC_ADJ) & SD_EMMC_ADJUST_ADJ_DELAY_MASK;
+    
+            unsafe {
+                ptr::write_volatile(&mut self.register.adjust, adjust);
+            }
+        };
+
+        res
+    }
+
     fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcError> {
         // Why calling this function if the timing does not change?
         if self.timing == timing {
@@ -566,7 +651,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
          * If CLK_CO_PHASE_270 is used, it's more stable than other.
          * Other SoCs use CLK_CO_PHASE_180 by default.
          * Linux default to use CLK_CO_PHASE_180
-         * However, if CLK_CO_PHASE_180 is used without tuning, 
+         * However, if CLK_CO_PHASE_180 is used without tuning,
          * Sdcard will not work in High speed mode on Odroid C4
          */
         meson_mmc_clk |= CLK_CO_PHASE_180;
@@ -717,7 +802,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
             debug_log!("SDMMC: Print out error request:\n");
             debug_log!("cmd idx: {}\n", cmd.cmdidx);
             debug_log!("cmd arg: {}\n", cmd.cmdarg);
-            
+
             self.meson_wait_desc_stop()?;
             return_val = Err(SdmmcError::EIO);
         }
@@ -728,7 +813,11 @@ impl SdmmcHardware for SdmmcMesonHardware {
     }
 
     /// This function is meant to clear, acknowledge and then reenable the interrupt
-    fn sdmmc_config_interrupt(&mut self, enable_irq: bool, enable_sdio_irq: bool) -> Result<(), SdmmcError> {
+    fn sdmmc_config_interrupt(
+        &mut self,
+        enable_irq: bool,
+        enable_sdio_irq: bool,
+    ) -> Result<(), SdmmcError> {
         // Disable interrupt
         unsafe {
             ptr::write_volatile(&mut self.register.irq_en, 0);
@@ -812,12 +901,11 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(())
     }
 
-
     // Experimental function that tries to modify the pin that might control the power of the sdcard slot
     // This function should be pretty much the same with sdmmc_set_signal_voltage, the only difference
     // is the pin modified is gpioAO_3, busy wait is needed to be added after setting the power
-    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {      
-        /* 
+    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {
+        /*
         unsafe {
             debug_log!("In set power function\n");
             let mut value: u32;
@@ -830,7 +918,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
             debug_log!("Address {:#x}: {:#x}\n", AO_RTI_OUTPUT_LEVEL_REG, value);
 
             value = ptr::read_volatile(AO_RTI_PULL_UP_EN_REG as *const u32);
-            debug_log!("Address {:#x}: {:#x}\n", AO_RTI_PULL_UP_EN_REG, value);   
+            debug_log!("Address {:#x}: {:#x}\n", AO_RTI_PULL_UP_EN_REG, value);
         }
         */
 

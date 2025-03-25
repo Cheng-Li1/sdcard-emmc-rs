@@ -8,16 +8,16 @@ use super::{
     SdmmcError, SdmmcHardware, SdmmcProtocol,
 };
 
-pub(crate) struct Sdcard {
-    pub card_id: u128,
-    pub manufacture_info: Cid,
-    pub card_specific_data: Csd,
-    pub card_version: SdVersion,
-    pub relative_card_addr: u16,
-    pub card_state: MmcState,
-    pub card_cap: SdcardCapability,
-    pub method: BlockTransmissionMode,
-    pub card_config: Option<Scr>,
+pub struct Sdcard {
+    pub(crate) card_id: u128,
+    pub(crate) manufacture_info: Cid,
+    pub(crate) card_specific_data: Csd,
+    pub(crate) card_version: SdVersion,
+    pub(crate) relative_card_addr: u16,
+    pub(crate) card_state: MmcState,
+    pub(crate) card_cap: SdcardCapability,
+    pub(crate) method: BlockTransmissionMode,
+    pub(crate) card_config: Option<Scr>,
 }
 
 /// Placeholder eMMC struct that is not implemented
@@ -32,14 +32,14 @@ pub struct EMmc {
 // The SD card specification is cumulative, meaning that if an SD card reports support for a
 // particular version (say 4.0), it implicitly supports all earlier versions as well.
 #[derive(Debug, PartialEq, Eq)]
-pub enum SdVersion {
+pub(crate) enum SdVersion {
     V1_0 = 1,
     V2_0 = 2,
     V3_0 = 3,
     V4_0 = 4,
 }
 
-pub struct Cid {
+pub(crate) struct Cid {
     manufacturer_id: u8,
     oem_id: u16,
     product_name: [u8; 5],
@@ -115,7 +115,7 @@ impl ToArray for Cid {
 }
 
 // This struct is super unreliable, I am thinking
-pub struct Csd {
+pub(crate) struct Csd {
     csd_structure: u8,
     card_capacity: u64,
     max_read_block_len: u16,
@@ -194,7 +194,7 @@ impl Csd {
     }
 }
 
-pub struct Scr {
+pub(crate) struct Scr {
     // Not extracted from Scr parsing yet
     pub sd_spec: u32,
     pub data_stat_after_erase: bool,

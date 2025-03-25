@@ -33,8 +33,8 @@ use crate::sdmmc_traits::SdmmcHardware;
 use crate::sdmmc_os::{debug_log, process_wait_unreliable};
 
 pub mod mmc_struct;
-mod sd_ops;
-mod sdcard;
+pub mod sd_ops;
+pub mod sdcard;
 pub mod sdmmc_capability;
 mod sdmmc_constant;
 
@@ -65,6 +65,8 @@ pub enum SdmmcError {
     ETIMEDOUT,
     EINVAL,
     EIO,
+    // Error that I currently not sure how to deal with...
+    EUNKNOWN,
     EUNSUPPORTEDCARD,
     ENOTIMPLEMENTED,
     // This error should not be triggered unless there are bugs in program

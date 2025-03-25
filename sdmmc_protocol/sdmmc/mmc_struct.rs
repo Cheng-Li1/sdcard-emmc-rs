@@ -17,7 +17,7 @@ pub enum TuningState {
 }
 
 // Timing modes (could be an enum or use the bitflags constants defined earlier)
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum MmcTiming {
     Legacy = 0,
     MmcHs = 1,
@@ -37,7 +37,7 @@ pub enum MmcTiming {
     ClockStop = 15,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) struct MmcState {
     /// The timing specification that dictates how data is transferred between the host
     /// and the card.
