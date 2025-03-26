@@ -268,6 +268,8 @@ pub struct SdmmcProtocol<T: SdmmcHardware> {
 
     /// This mmc device is optional because there may not always be a card in the slot!
     mmc_device: Option<MmcDevice>,
+
+    private_memory: Option<*mut [u8; 64]>,
 }
 
 impl<T> Unpin for SdmmcProtocol<T> where T: Unpin + SdmmcHardware {}
@@ -282,6 +284,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             host_info: info,
             host_capability: SdmmcHostCapability(cap),
             mmc_device: None,
+            private_memory: None,
         })
     }
 
@@ -638,6 +641,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         // Turn down the clock frequency
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
+
+        self.private_memory = Some(memory);
 
         match mmc_device {
             MmcDevice::Sdcard(sdcard) => {
@@ -1132,8 +1137,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             }
         };
 
-        let cmd: SdmmcCmd;
-        let res: Result<(), SdmmcError>;
+        let mut cmd: SdmmcCmd;
+        let mut res: Result<(), SdmmcError>;
+        let mut turing: bool = false;
 
         // TODO: Figure out a way to support cards with 4 KB sector size
         let data: MmcData = MmcData {
@@ -1157,31 +1163,62 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // For now we default to assume the card is high_capacity
         // TODO: Fix it when we properly implement card boot up
         // TODO: If we boot the card by ourself or reset the card, remember to send block len cmd
-        if blockcnt == 1 {
-            cmd = SdmmcCmd {
-                cmdidx: MMC_CMD_READ_SINGLE_BLOCK,
-                resp_type: MMC_RSP_R1,
-                cmdarg: start_idx as u32,
-            };
-            res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp).await;
-
-            return (res, self);
-        } else {
-            // TODO: Add if here to determine if the card support cmd23 or not to determine to use cmd23 or cmd12
-            // Set the expected number of blocks
-
-            cmd = SdmmcCmd {
-                cmdidx: MMC_CMD_READ_MULTIPLE_BLOCK,
-                resp_type: MMC_RSP_R1,
-                cmdarg: start_idx as u32,
-            };
-
-            res =
-                Self::sdmmc_multi_blocks_io(&mut self.hardware, &cmd, &data, &mut resp, trans_meth)
+        loop {
+            if blockcnt == 1 {
+                cmd = SdmmcCmd {
+                    cmdidx: MMC_CMD_READ_SINGLE_BLOCK,
+                    resp_type: MMC_RSP_R1,
+                    cmdarg: start_idx as u32,
+                };
+                res = Self::sdmmc_async_request(&mut self.hardware, &cmd, Some(&data), &mut resp)
                     .await;
+            } else {
+                // TODO: Add if here to determine if the card support cmd23 or not to determine to use cmd23 or cmd12
+                // Set the expected number of blocks
 
-            return (res, self);
+                cmd = SdmmcCmd {
+                    cmdidx: MMC_CMD_READ_MULTIPLE_BLOCK,
+                    resp_type: MMC_RSP_R1,
+                    cmdarg: start_idx as u32,
+                };
+
+                res = Self::sdmmc_multi_blocks_io(
+                    &mut self.hardware,
+                    &cmd,
+                    &data,
+                    &mut resp,
+                    trans_meth.clone(),
+                )
+                .await;
+            }
+            match res {
+                Ok(()) => {}
+                Err(ref err) => {
+                    let stop_cmd: SdmmcCmd = SdmmcCmd {
+                        cmdidx: MMC_CMD_STOP_TRANSMISSION,
+                        resp_type: MMC_RSP_R1B,
+                        cmdarg: 0,
+                    };
+                    // Sending stop command manually regardless of whether it has been sent or not
+                    let _ =
+                        Self::sdmmc_async_request(&mut self.hardware, &stop_cmd, None, &mut resp)
+                            .await;
+
+                    if let SdmmcError::EIO = err {
+                        if let Some(memory) = self.private_memory {
+                            if turing == false {
+                                turing = true;
+                                if let Ok(()) = self.hardware.sdmmc_execute_tuning(memory) {
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            break;
         }
+        (res, self)
     }
 
     // Almost the same with read_block aside from the cmd being sent is a bit different
@@ -1239,6 +1276,20 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             res =
                 Self::sdmmc_multi_blocks_io(&mut self.hardware, &cmd, &data, &mut resp, trans_meth)
                     .await;
+
+            match res {
+                Ok(()) => {}
+                Err(_) => {
+                    let cmd: SdmmcCmd = SdmmcCmd {
+                        cmdidx: MMC_CMD_STOP_TRANSMISSION,
+                        resp_type: MMC_RSP_R1B,
+                        cmdarg: 0,
+                    };
+                    // Sending stop command manually regardless of whether it has been sent or not
+                    let _ =
+                        Self::sdmmc_async_request(&mut self.hardware, &cmd, None, &mut resp).await;
+                }
+            }
 
             return (res, self);
         }
@@ -1363,6 +1414,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         resp: &mut [u32; 4],
         transmission_mode: BlockTransmissionMode,
     ) -> Result<(), SdmmcError> {
+        // Trasmission stage
         match transmission_mode {
             BlockTransmissionMode::SetBlockCount => {
                 let cmd: SdmmcCmd = SdmmcCmd {
@@ -1376,7 +1428,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 Self::sdmmc_async_request(hardware, &request_cmd, Some(&data), resp).await
             }
             BlockTransmissionMode::StopTransmission => {
-                Self::sdmmc_async_request(hardware, &request_cmd, Some(&data), resp).await?;
+                let temp_res: Result<(), SdmmcError> =
+                    Self::sdmmc_async_request(hardware, &request_cmd, Some(&data), resp).await;
 
                 // Uboot code for determine response type in this case
                 // cmd.resp_type = (IS_SD(mmc) || write) ? MMC_RSP_R1b : MMC_RSP_R1;
@@ -1387,7 +1440,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                     cmdarg: 0,
                 };
 
-                Self::sdmmc_async_request(hardware, &cmd, None, resp).await
+                // Technically this command has very little possibility to fail
+                // Unless for hardware or environment issue
+                let _ = Self::sdmmc_async_request(hardware, &cmd, None, resp).await;
+
+                temp_res
             }
             BlockTransmissionMode::AutoStop => {
                 Self::sdmmc_async_request(hardware, &request_cmd, Some(&data), resp).await
@@ -1395,7 +1452,6 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         }
     }
 }
-
 enum CmdState {
     // Waiting for the response
     WaitingForResponse,

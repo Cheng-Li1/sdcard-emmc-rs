@@ -531,7 +531,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(())
     }
 
-    fn sdmmc_execute_tuning(&mut self, memory_addr: u64) -> Result<(), SdmmcError> {
+    fn sdmmc_execute_tuning(&mut self, memory: *mut [u8; 64]) -> Result<(), SdmmcError> {
         let mut current_delay: u32 = 0;
 
         if let Some(ref config) = self.delay {
@@ -568,7 +568,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         let mut tried_highest_delay: u32 = current_delay;
 
         loop {
-            let res: Result<(), SdmmcError> = Sdcard::sdcard_test_tuning(self, memory_addr);
+            let res: Result<(), SdmmcError> = Sdcard::sdcard_test_tuning(self, memory);
 
             match res {
                 Ok(_) => {

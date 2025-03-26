@@ -157,8 +157,8 @@ pub trait SdmmcHardware {
     fn sdmmc_tune_sampling(&mut self, state: TuningState) -> Result<(), SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
-    
-    fn sdmmc_execute_tuning(&mut self, memory_addr: u64)  -> Result<(), SdmmcError> {
+
+    fn sdmmc_execute_tuning(&mut self, memory: *mut [u8; 64]) -> Result<(), SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
 

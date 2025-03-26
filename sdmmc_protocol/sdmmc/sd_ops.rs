@@ -60,7 +60,7 @@ impl Sdcard {
 
     pub fn sdcard_test_tuning<T: SdmmcHardware>(
         hardware: &mut T,
-        physical_memory: u64,
+        memory: *mut [u8; 64],
     ) -> Result<(), SdmmcError> {
         let mut resp: [u32; 4] = [0; 4];
 
@@ -68,7 +68,7 @@ impl Sdcard {
             blocksize: 64,
             blockcnt: 1,
             flags: MmcDataFlag::SdmmcDataRead,
-            addr: physical_memory,
+            addr: memory as u64,
         };
 
         let cmd = SdmmcCmd {
