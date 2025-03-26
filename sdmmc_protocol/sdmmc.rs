@@ -1,5 +1,8 @@
 use core::{
-    future::Future, pin::Pin, sync::atomic::Ordering, task::{Context, Poll, Waker}
+    future::Future,
+    pin::Pin,
+    sync::atomic::Ordering,
+    task::{Context, Poll, Waker},
 };
 
 use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming, TuningState};
@@ -639,7 +642,11 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         // Turn down the clock frequency
         self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
-        self.private_memory = Some(memory);
+        // The private memory should be the physically memory
+        // However any attempt to dereference the pointer
+        // could crash the program if the driver don't have access
+        // to the phyical memory at the proper address
+        self.private_memory = Some(physical_memory_addr as *mut [u8; 64]);
 
         match mmc_device {
             MmcDevice::Sdcard(sdcard) => {
@@ -680,62 +687,6 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             debug_log!("Error in reading\n");
         }
         unsafe { print_one_block(destination as *mut u8, 512) };
-    }
-
-    fn test_sampling(
-        &mut self,
-        memory_addr: u64,
-        cache_invalidate_function: fn(),
-    ) -> Result<(), SdmmcError> {
-        let mut resp: [u32; 4] = [0; 4];
-
-        let data = MmcData {
-            blocksize: 64,
-            blockcnt: 1,
-            flags: MmcDataFlag::SdmmcDataRead,
-            addr: memory_addr,
-        };
-
-        let cmd = SdmmcCmd {
-            cmdidx: SD_CMD_SWITCH_FUNC,
-            resp_type: MMC_RSP_R1,
-            cmdarg: 0x00FFFFFF,
-        };
-
-        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)
-        // TODO: Add validate the content of data returned here, but it is optional because
-        // if there is not error it must has passed the CRC check!
-    }
-
-    fn process_sampling(
-        &mut self,
-        memory_addr: u64,
-        cache_invalidate_function: fn(),
-    ) -> Result<(), SdmmcError> {
-        self.hardware
-            .sdmmc_tune_sampling(TuningState::TuningStart)?;
-        loop {
-            // Call test_sampling
-            match self.test_sampling(memory_addr, cache_invalidate_function) {
-                Ok(_) => {
-                    self.hardware
-                        .sdmmc_tune_sampling(TuningState::TuningComplete)?;
-                    // If test_sampling succeeds, return Ok
-                    return Ok(());
-                }
-                Err(SdmmcError::EIO) => {
-                    // If test_sampling fails with EIO, try tuning the sampling point
-                    debug_log!("Try different sampling points\n");
-                    self.hardware
-                        .sdmmc_tune_sampling(TuningState::TuningContinue)?;
-                }
-                Err(e) => {
-                    // If test_sampling fails with an error other than EIO, return that error
-                    debug_log!("Tuning sampling fails\n");
-                    return Err(e);
-                }
-            }
-        }
     }
 
     /// Switch voltage function
@@ -1101,7 +1052,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 )?;
             }
             self.mmc_ios.clock = self.hardware.sdmmc_config_timing(target_timing)?;
-            self.process_sampling(physical_memory_addr, cache_invalidate_function)?;
+
+            self.hardware
+                .sdmmc_execute_tuning(physical_memory_addr as *mut [u8; 64])?;
 
             debug_log!("Current frequency: {}Hz\n", self.mmc_ios.clock);
         } else {

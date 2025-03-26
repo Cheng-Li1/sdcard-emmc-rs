@@ -199,8 +199,6 @@ impl MesonSdmmcRegisters {
 struct DelayConfig {
     timing: MmcTiming,  // Clock rate in Hz
     current_delay: u32, // Delay value in some unit, e.g., nanoseconds
-    tried_lowest_delay: u32,
-    tried_highest_delay: u32,
 }
 
 pub struct SdmmcMesonHardware {
@@ -467,70 +465,6 @@ impl SdmmcHardware for SdmmcMesonHardware {
         return Ok((ios, info, cap));
     }
 
-    fn sdmmc_tune_sampling(&mut self, state: TuningState) -> Result<(), SdmmcError> {
-        match state {
-            TuningState::TuningStart => {
-                if let Some(ref mut delay_config) = self.delay {
-                    delay_config.tried_highest_delay = delay_config.current_delay;
-                    delay_config.tried_lowest_delay = delay_config.current_delay;
-                }
-                return Ok(());
-            }
-            TuningState::TuningContinue => (),
-            TuningState::TuningComplete => return Ok(()),
-        }
-
-        let mut delay_config = match self.delay.take() {
-            Some(config) if config.timing == self.timing => config,
-            _ => DelayConfig {
-                timing: self.timing,
-                current_delay: 0,
-                tried_lowest_delay: 0,
-                tried_highest_delay: 0,
-            },
-        };
-
-        let mut adjust: u32 = SD_EMMC_ADJ_ENABLE;
-        let clk: u32;
-
-        unsafe {
-            clk = ptr::read_volatile(&self.register.clock);
-        }
-
-        let clk_src: u32 = clk & CLK_SRC_MASK;
-
-        let mux_clk_freq: u32 = match clk_src {
-            CLK_SRC_24M => SD_EMMC_CLKSRC_24M,
-            CLK_SRC_DIV2 => SD_EMMC_CLKSRC_DIV2,
-            _ => return Err(SdmmcError::EUNDEFINED),
-        };
-
-        let max_div: u32 = div_round_up!(mux_clk_freq, self.frequency);
-
-        if max_div - delay_config.tried_highest_delay >= delay_config.tried_lowest_delay {
-            if max_div - delay_config.tried_highest_delay == 0 {
-                return Err(SdmmcError::EUNSUPPORTEDCARD);
-            }
-            delay_config.tried_highest_delay += 1;
-            delay_config.current_delay = delay_config.tried_highest_delay;
-        } else {
-            delay_config.tried_lowest_delay -= 1;
-            delay_config.current_delay = delay_config.tried_lowest_delay;
-        }
-
-        adjust |= (delay_config.current_delay << SD_EMMC_ADJ) & SD_EMMC_ADJUST_ADJ_DELAY_MASK;
-
-        debug_log!("Tuning sampling function: Current delay: {}, tried lowest delay: {}, tried highest delay: {}, final register value: 0x{:08x}\n", delay_config.current_delay, delay_config.tried_lowest_delay, delay_config.tried_highest_delay, adjust);
-
-        self.delay = Some(delay_config);
-
-        unsafe {
-            ptr::write_volatile(&mut self.register.adjust, adjust);
-        }
-
-        Ok(())
-    }
-
     fn sdmmc_execute_tuning(&mut self, memory: *mut [u8; 64]) -> Result<(), SdmmcError> {
         let mut current_delay: u32 = 0;
 
@@ -568,6 +502,12 @@ impl SdmmcHardware for SdmmcMesonHardware {
         let mut tried_highest_delay: u32 = current_delay;
 
         loop {
+            debug_log!(
+                "current delay: {}, lowest_tried: {}, highest_tried: {}\n",
+                current_delay,
+                tried_lowest_delay,
+                tried_highest_delay
+            );
             let res: Result<(), SdmmcError> = Sdcard::sdcard_test_tuning(self, memory);
 
             match res {
@@ -575,8 +515,6 @@ impl SdmmcHardware for SdmmcMesonHardware {
                     self.delay = Some(DelayConfig {
                         timing: self.timing,
                         current_delay,
-                        tried_lowest_delay: 0,
-                        tried_highest_delay: 0,
                     });
                     break Ok(());
                 }
@@ -980,7 +918,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
 
     fn sdmmc_host_reset(&mut self) -> Result<MmcIos, SdmmcError> {
         Self::meson_reset(self);
-        
+
         let ios: MmcIos = MmcIos {
             clock: MESON_MIN_FREQUENCY as u64,
             power_mode: MmcPowerMode::On,
