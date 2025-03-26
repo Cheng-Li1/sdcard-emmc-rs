@@ -2,13 +2,13 @@ use crate::sdmmc_traits::SdmmcHardware;
 
 use super::{
     sdcard::{Scr, Sdcard},
-    sdmmc_constant::{MMC_CMD_APP_CMD, SD_CMD_APP_SEND_SCR},
+    sdmmc_constant::{MMC_CMD_APP_CMD, SD_CMD_APP_SEND_SCR, SD_CMD_SWITCH_FUNC},
     MmcData, MmcDataFlag, SdmmcCmd, SdmmcError, MMC_RSP_R1,
 };
 
 impl Sdcard {
     /// Unsafe because dereference raw pointer
-    pub unsafe fn sdcard_get_configuration_register<T: SdmmcHardware>(
+    pub(crate) unsafe fn sdcard_get_configuration_register<T: SdmmcHardware>(
         hardware: &mut T,
         physical_memory: u64,
         raw_memory: *mut [u8; 64],
@@ -56,5 +56,27 @@ impl Sdcard {
         let scr: Scr = Scr::new(scr_raw)?;
 
         Ok(scr)
+    }
+
+    pub fn sdcard_test_tuning<T: SdmmcHardware>(
+        hardware: &mut T,
+        physical_memory: u64,
+    ) -> Result<(), SdmmcError> {
+        let mut resp: [u32; 4] = [0; 4];
+
+        let data = MmcData {
+            blocksize: 64,
+            blockcnt: 1,
+            flags: MmcDataFlag::SdmmcDataRead,
+            addr: physical_memory,
+        };
+
+        let cmd = SdmmcCmd {
+            cmdidx: SD_CMD_SWITCH_FUNC,
+            resp_type: MMC_RSP_R1,
+            cmdarg: 0x00FFFFFF,
+        };
+
+        hardware.sdmmc_do_request(&cmd, Some(&data), &mut resp, 1)
     }
 }

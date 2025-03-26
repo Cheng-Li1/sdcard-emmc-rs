@@ -96,6 +96,7 @@ const STATUS_MASK: u32 = 0xFFFF; // GENMASK(15, 0)
 const STATUS_ERR_MASK: u32 = 0x1FFF; // GENMASK(12, 0)
 const STATUS_RXD_ERR_MASK: u32 = 0xFF; // GENMASK(7, 0)
 const STATUS_TXD_ERR: u32 = 1 << 8; // BIT(8)
+const STATUS_EIO_ERR: u32 = STATUS_RXD_ERR_MASK | STATUS_TXD_ERR; // GENMASK(8, 0)
 const STATUS_DESC_ERR: u32 = 1 << 9; // BIT(9)
 const STATUS_RESP_ERR: u32 = 1 << 10; // BIT(10)
 const STATUS_RESP_TIMEOUT: u32 = 1 << 11; // BIT(11)
@@ -538,6 +539,12 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 current_delay = config.current_delay;
             }
         }
+        // If there is no existing delay config, clear the adjust register anyway
+        else {
+            unsafe {
+                ptr::write_volatile(&mut self.register.adjust, 0);
+            }
+        }
 
         let mut adjust: u32 = SD_EMMC_ADJ_ENABLE;
         let clk: u32;
@@ -560,27 +567,34 @@ impl SdmmcHardware for SdmmcMesonHardware {
 
         let mut tried_highest_delay: u32 = current_delay;
 
-        let res: Result<(), SdmmcError> = loop {
+        loop {
             let res: Result<(), SdmmcError> = Sdcard::sdcard_test_tuning(self, memory_addr);
 
             match res {
                 Ok(_) => {
-                    self.delay = Some(
-                        DelayConfig { timing: self.timing, current_delay, tried_lowest_delay: 0, tried_highest_delay: 0 }
-                    );
-                    break Ok(())
-                },
-                Err(SdmmcError::EIO) => {},
+                    self.delay = Some(DelayConfig {
+                        timing: self.timing,
+                        current_delay,
+                        tried_lowest_delay: 0,
+                        tried_highest_delay: 0,
+                    });
+                    break Ok(());
+                }
+                Err(SdmmcError::EIO) => {}
                 Err(_) => {
                     self.delay = None;
                     unsafe {
                         ptr::write_volatile(&mut self.register.adjust, 0);
                     }
-                    break Err(SdmmcError::EUNSUPPORTEDCARD)
-                },
+                    break Err(SdmmcError::EUNSUPPORTEDCARD);
+                }
             }
 
             if max_div - tried_highest_delay == 0 {
+                self.delay = None;
+                unsafe {
+                    ptr::write_volatile(&mut self.register.adjust, 0);
+                }
                 break Err(SdmmcError::EUNSUPPORTEDCARD);
             }
 
@@ -593,15 +607,13 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 tried_lowest_delay -= 1;
                 current_delay = tried_lowest_delay;
             }
-    
+
             adjust |= (current_delay << SD_EMMC_ADJ) & SD_EMMC_ADJUST_ADJ_DELAY_MASK;
-    
+
             unsafe {
                 ptr::write_volatile(&mut self.register.adjust, adjust);
             }
-        };
-
-        res
+        }
     }
 
     fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcError> {
@@ -776,40 +788,44 @@ impl SdmmcHardware for SdmmcMesonHardware {
             return Err(SdmmcError::EBUSY);
         }
 
-        if (status & STATUS_RESP_TIMEOUT) != 0 {
-            debug_log!(
-                "SDMMC: CARD TIMEOUT! Host status register: 0x{:08x}\n",
-                status
-            );
-            // For debug
-            debug_log!("SDMMC: Print out error request:\n");
-            debug_log!("cmd idx: {}\n", cmd.cmdidx);
-            debug_log!("cmd arg: {}\n", cmd.cmdarg);
-
-            // This could negatively impact the result of benchmarking in case of cmd error
-            self.meson_wait_desc_stop()?;
-            return Err(SdmmcError::ETIMEDOUT);
-        }
-
-        let mut return_val: Result<(), SdmmcError> = Ok(());
-
-        if (status & STATUS_ERR_MASK) != 0 {
-            debug_log!(
-                "SDMMC: CARD IO ERROR! Host status register: 0x{:08x}\n",
-                status
-            );
-            // For debug
-            debug_log!("SDMMC: Print out error request:\n");
-            debug_log!("cmd idx: {}\n", cmd.cmdidx);
-            debug_log!("cmd arg: {}\n", cmd.cmdarg);
-
-            self.meson_wait_desc_stop()?;
-            return_val = Err(SdmmcError::EIO);
-        }
-
         self.meson_read_response(cmd, response);
 
-        return_val
+        if (status & STATUS_ERR_MASK) != 0 {
+            // For debug
+            debug_log!("SDMMC: Print out error request:\n");
+            debug_log!("cmd idx: {}\n", cmd.cmdidx);
+            debug_log!("cmd arg: 0x{:x}\n", cmd.cmdarg);
+
+            debug_log!("Odroidc4 status register: 0x{:08}\n", status);
+
+            debug_log!("Card's first response register: 0x{:08}\n", response[0]);
+
+            if (status & STATUS_RESP_TIMEOUT) != 0 {
+                debug_log!("SDMMC: CARD TIMEOUT!\n");
+
+                // The card will try to polling the status register until
+                // both descriptor and card are not in busy state
+                self.meson_wait_desc_stop()?;
+                return Err(SdmmcError::ETIMEDOUT);
+            }
+
+            if (status & STATUS_EIO_ERR) != 0 {
+                debug_log!("SDMMC: CARD IO ERROR! Perform retuning\n");
+
+                self.meson_wait_desc_stop()?;
+                // Notified the card to retune the card
+                return Err(SdmmcError::EIO);
+            }
+
+            debug_log!(
+                "SDMMC: Unknown error, copy the prints from card init to end of the print and send it to me\n"
+            );
+
+            self.meson_wait_desc_stop()?;
+            return Err(SdmmcError::EUNKNOWN);
+        }
+
+        Ok(())
     }
 
     /// This function is meant to clear, acknowledge and then reenable the interrupt
