@@ -1,3 +1,5 @@
+use core::sync::atomic::Ordering;
+
 use crate::sdmmc_traits::SdmmcHardware;
 
 use super::{
@@ -37,8 +39,10 @@ impl Sdcard {
 
         hardware.sdmmc_do_request(&cmd, Some(&data), &mut resp, 0)?;
 
-        invalidate_cache_fn();
+        core::sync::atomic::fence(Ordering::Acquire);
 
+        invalidate_cache_fn();
+    
         // print out the content of the SCR register
         sel4_microkit_support::debug_log!("SCR register content: ");
         unsafe { crate::sdmmc::print_one_block(raw_memory as *const u8, 8) };

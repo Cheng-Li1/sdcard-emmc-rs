@@ -162,8 +162,7 @@ pub trait SdmmcHardware {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
 
-    // Should return MmcIos
-    fn sdmmc_host_reset(&mut self) -> Result<(), SdmmcError> {
+    fn sdmmc_host_reset(&mut self) -> Result<MmcIos, SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
 

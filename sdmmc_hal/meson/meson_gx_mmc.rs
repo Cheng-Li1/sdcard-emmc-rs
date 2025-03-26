@@ -446,10 +446,6 @@ impl SdmmcHardware for SdmmcMesonHardware {
 
         let ios: MmcIos = MmcIos {
             clock: MESON_MIN_FREQUENCY as u64,
-            // On odroid c4, the operating voltage is default to 3.3V
-            vdd: (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32),
-            // TODO, figure out the correct value when we can power the card on and off
-            power_delay_ms: 10,
             power_mode: MmcPowerMode::On,
             bus_width: MmcBusWidth::Width1,
             signal_voltage: MmcSignalVoltage::Voltage330,
@@ -462,6 +458,10 @@ impl SdmmcHardware for SdmmcMesonHardware {
             max_frequency: MESON_MAX_FREQUENCY as u64,
             min_frequency: MESON_MIN_FREQUENCY as u64,
             max_block_per_req: MAX_BLOCK_PER_TRANSFER,
+            // On odroid c4, the operating voltage is default to 3.3V
+            vdd: (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32),
+            // TODO, figure out the correct value when we can power the card on and off
+            power_delay_ms: 5,
         };
 
         return Ok((ios, info, cap));
@@ -978,8 +978,19 @@ impl SdmmcHardware for SdmmcMesonHardware {
         Ok(())
     }
 
-    fn sdmmc_host_reset(&mut self) -> Result<(), SdmmcError> {
+    fn sdmmc_host_reset(&mut self) -> Result<MmcIos, SdmmcError> {
         Self::meson_reset(self);
-        Ok(())
+        
+        let ios: MmcIos = MmcIos {
+            clock: MESON_MIN_FREQUENCY as u64,
+            power_mode: MmcPowerMode::On,
+            bus_width: MmcBusWidth::Width1,
+            signal_voltage: MmcSignalVoltage::Voltage330,
+            enabled_irq: false,
+            emmc: None,
+            spi: None,
+        };
+
+        Ok(ios)
     }
 }

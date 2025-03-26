@@ -1,7 +1,5 @@
 use core::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll, Waker},
+    future::Future, pin::Pin, sync::atomic::Ordering, task::{Context, Poll, Waker}
 };
 
 use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming, TuningState};
@@ -186,23 +184,6 @@ pub struct MmcIos {
     ///   data transfer occurs at higher rates.
     pub clock: u64,
 
-    /// The voltage range (VDD) used for powering the SD/MMC card.
-    ///
-    /// - This field stores the selected voltage range in a bit-encoded format.
-    ///   It indicates the voltage level the card is operating at.
-    /// - Common voltage levels are 3.3V, 1.8V, and sometimes 1.2V (for eMMC).
-    /// - Cards often negotiate their operating voltage during initialization.
-    pub vdd: u32,
-
-    /// The power delay (in milliseconds) used after powering the card to ensure
-    /// stable operation.
-    ///
-    /// - After powering up the card, the host controller typically waits for a
-    ///   certain period before initiating communication to ensure that the card's
-    ///   power supply is stable.
-    /// - This delay ensures the card is ready to respond to commands.
-    pub power_delay_ms: u32,
-
     /// The current power supply mode for the SD/MMC card.
     ///
     /// - This field indicates whether the card is powered on, powered off, or
@@ -254,6 +235,22 @@ pub struct HostInfo {
     pub max_frequency: u64,
     pub min_frequency: u64,
     pub max_block_per_req: u32,
+    /// The voltage range (VDD) used for powering the SD/MMC card.
+    ///
+    /// - This field stores the selected voltage range in a bit-encoded format.
+    ///   It indicates the voltage level the card is operating at.
+    /// - Common voltage levels are 3.3V, 1.8V, and sometimes 1.2V (for eMMC).
+    /// - Cards often negotiate their operating voltage during initialization.
+    pub vdd: u32,
+
+    /// The power delay (in milliseconds) used after powering the card to ensure
+    /// stable operation.
+    ///
+    /// - After powering up the card, the host controller typically waits for a
+    ///   certain period before initiating communication to ensure that the card's
+    ///   power supply is stable.
+    /// - This delay ensures the card is ready to respond to commands.
+    pub power_delay_ms: u32,
 }
 
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
@@ -357,7 +354,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // Right now we deliberately not set XPC bit for maximum compatibility
 
             // Change this when we decide to support spi or SDSC as well
-            cmd.cmdarg |= self.mmc_ios.vdd & 0xff8000;
+            cmd.cmdarg |= self.host_info.vdd & 0xff8000;
 
             if self
                 .host_capability
@@ -406,7 +403,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
     fn sdmmc_power_cycle(&mut self) -> Result<(), SdmmcError> {
         self.hardware.sdmmc_set_power(MmcPowerMode::Off)?;
-        process_wait_unreliable(5_000_000);
+        process_wait_unreliable(self.host_info.power_delay_ms as u64 * 1_000_000);
 
         self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
         process_wait_unreliable(1_000_000);
@@ -427,7 +424,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // TODO: Right now we know the power will always be up and this function should not be called
             // But when we encounter scenerio that may actually call this function, we should wait for the time specified in ios
             // Right now this whole power up related thing does not work
-            process_wait_unreliable(self.mmc_ios.power_delay_ms as u64 * 1_000_000);
+            process_wait_unreliable(self.host_info.power_delay_ms as u64 * 1_000_000);
 
             self.mmc_ios.power_mode = MmcPowerMode::On;
         }
@@ -459,7 +456,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                         debug_log!("Try to init the card without voltage switch\n");
                         self.sdmmc_power_cycle()?;
 
-                        self.hardware.sdmmc_host_reset()?;
+                        self.mmc_ios = self.hardware.sdmmc_host_reset()?;
 
                         // One bug that does not break anything here is
                         // sdmmc_host_reset will reset the clock to CardSetup timing and turn off the irq
@@ -847,6 +844,15 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg,
         };
         Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)?;
+
+        // The use of fence here is actually wrong
+        // As the fence(Ordering::Acquire) on arm platform
+        // does not enforce the ordering of normal memory
+        // and device memory access
+        // But I will just leave it here as I cannot figure out
+        // A more elegant way and code works fine anyway
+        core::sync::atomic::fence(Ordering::Acquire);
+
         // Error handling here
         invalidate_cache_fn();
 
@@ -883,6 +889,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0x00FFFFFF,
         };
         Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)?;
+
+        core::sync::atomic::fence(Ordering::Acquire);
+
         invalidate_cache_fn();
         // Typical speed class supported: 80 03
         match self.mmc_ios.signal_voltage {
