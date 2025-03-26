@@ -313,7 +313,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0x000001AA, // Voltage supply and check pattern
         };
 
-        let res = Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp);
+        let res: Result<(), SdmmcError> = self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1);
 
         // If the result is OK and the resp is 0x1AA, the card we are initializing is a SDHC/SDXC
         // If the result is error, it is either the voltage not being set up correctly, which mean a bug in hardware layer
@@ -336,7 +336,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             };
 
             // Send CMD55
-            let res = Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp);
+            let res = self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0);
 
             match res {
                 Ok(_) => {}
@@ -371,7 +371,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             }
 
             // Send ACMD41
-            Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+            self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0)?;
 
             debug_log!("OCR: {:08x}\n", resp[0]);
 
@@ -504,7 +504,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R2,
             cmdarg: 0,
         };
-        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1)?;
 
         let cid: Cid = Cid::new(resp);
 
@@ -529,7 +529,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0,
         };
 
-        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1)?;
 
         let rca: u16 = (resp[0] >> 16) as u16; // Store RCA from response
 
@@ -541,7 +541,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R2,
             cmdarg: (rca as u32) << 16,
         };
-        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+
+        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1)?;
 
         debug_log!(
             "CSD: {:08x} {:08x} {:08x} {:08x}\n",
@@ -559,7 +560,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R1,
             cmdarg: (rca as u32) << 16,
         };
-        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+
+        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1)?;
 
         // SDHC/SDXC default to 512 bytes sector size so I did not manually set it here
 
@@ -681,8 +683,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R1,
             cmdarg: cmd_arg as u32,
         };
-        if let Err(error) =
-            Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)
+        if let Err(error) = self
+            .hardware
+            .sdmmc_do_request(&cmd, Some(&data), &mut resp, 0)
         {
             debug_log!("Error in reading\n");
         }
@@ -699,7 +702,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0, // Argument for 4-bit mode (0 for 1-bit mode)
         };
 
-        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0)?;
 
         debug_log!("Switch voltage prepared!\n");
 
@@ -794,12 +797,13 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R1,
             cmdarg,
         };
-        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)?;
+        self.hardware
+            .sdmmc_do_request(&cmd, Some(&data), &mut resp, 0)?;
 
         // The use of fence here is actually wrong
         // As the fence(Ordering::Acquire) on arm platform
-        // does not enforce the ordering of normal memory
-        // and device memory access
+        // The cache maintenance instructions are not ordered 
+        // by the Load-Acquire and Store-Release instructions
         // But I will just leave it here as I cannot figure out
         // A more elegant way and code works fine anyway
         core::sync::atomic::fence(Ordering::Acquire);
@@ -839,7 +843,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R1,
             cmdarg: 0x00FFFFFF,
         };
-        Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, Some(&data), &mut resp)?;
+
+        self.hardware
+            .sdmmc_do_request(&cmd, Some(&data), &mut resp, 0)?;
 
         core::sync::atomic::fence(Ordering::Acquire);
 
@@ -928,14 +934,14 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 resp_type: MMC_RSP_R1,
                 cmdarg: (relative_card_address as u32) << 16,
             };
-            Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+            self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0)?;
 
             let cmd = SdmmcCmd {
                 cmdidx: SD_CMD_APP_SET_BUS_WIDTH,
                 resp_type: MMC_RSP_R1,
                 cmdarg: 2, // Argument for 4-bit mode (0 for 1-bit mode)
             };
-            Self::send_cmd_and_receive_resp(&mut self.hardware, &cmd, None, &mut resp)?;
+            self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0)?;
 
             self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width4)?;
 
@@ -1302,50 +1308,6 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         res = Self::sdmmc_async_request(&mut self.hardware, &cmd, None, &mut resp).await;
 
         return (res, self);
-    }
-
-    fn send_cmd_and_receive_resp(
-        hardware: &mut T,
-        cmd: &SdmmcCmd,
-        data: Option<&MmcData>,
-        resp: &mut [u32; 4],
-    ) -> Result<(), SdmmcError> {
-        // TODO: Maybe should temporarily disable interrupt here??
-
-        // Send the command using the hardware layer
-        let mut res = hardware.sdmmc_send_command(cmd, data);
-        if res.is_err() {
-            return res;
-        }
-
-        res = Err(SdmmcError::ETIMEDOUT);
-
-        // TODO: Change it to use the sleep function provided by the hardware layer
-        // This is a busy poll retry, we could poll infinitely if we trust the device to be correct
-        let mut retry: u32 = 100_000_000;
-
-        // sel4_microkit::debug_println!("Request sent! Let us wait!");
-
-        while retry > 0 {
-            // Try to receive the response
-            res = hardware.sdmmc_receive_response(cmd, resp);
-
-            if let Err(SdmmcError::EBUSY) = res {
-                // Busy response, retry
-                retry -= 1;
-                // hardware.sleep(1); // Placeholder: Implement a sleep function in SdmmcHardware trait
-            } else {
-                // If any other error or success, break the loop
-                break;
-            }
-        }
-
-        if let Err(_) = res {
-            debug_log!("Resp[0] value {:08x}\n", resp[0]);
-        }
-
-        // TODO: Add renable interrupt here
-        res // Return the final result (Ok or Err)
     }
 
     /// Function to execute one sdmmc request asynchronously
