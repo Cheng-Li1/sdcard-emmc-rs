@@ -9,13 +9,6 @@ pub enum MmcBusWidth {
     Width8 = 3,
 }
 
-#[derive(Debug)]
-pub enum TuningState {
-    TuningStart = 0,
-    TuningContinue = 1,
-    TuningComplete = 2,
-}
-
 // Timing modes (could be an enum or use the bitflags constants defined earlier)
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum MmcTiming {

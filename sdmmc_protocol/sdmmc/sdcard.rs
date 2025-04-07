@@ -3,9 +3,9 @@ use core::fmt::{self, Write};
 use sel4_microkit_support::debug_log;
 
 use super::{
-    mmc_struct::{self, BlockTransmissionMode, MmcBusWidth, MmcState},
+    mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcState},
     sdmmc_capability::SdcardCapability,
-    SdmmcError, SdmmcHardware, SdmmcProtocol,
+    SdmmcError,
 };
 
 pub struct Sdcard {

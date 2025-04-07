@@ -1,7 +1,7 @@
 use sel4_microkit_support::{debug_log, process_wait_unreliable};
 
 use crate::sdmmc::{
-    mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
+    mmc_struct::{MmcBusWidth, MmcTiming},
     HostInfo, MmcData, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError,
 };
 

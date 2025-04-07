@@ -1,6 +1,6 @@
 {
     "rust-analyzer.cargo.extraEnv": {
-        "SEL4_INCLUDE_DIRS": "/home/li/Sel4/microkit-sdk-1.4.1/board/odroidc4/debug/include"
+        "SEL4_INCLUDE_DIRS": "/home/li/Sel4/microkit-sdk-2.0.1/board/odroidc4/debug/include"
     },
     "rust-analyzer.runnables.extraArgs": [
         "--exclude", "test",

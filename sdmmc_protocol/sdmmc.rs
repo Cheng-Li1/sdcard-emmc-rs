@@ -5,7 +5,7 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
-use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming, TuningState};
+use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming};
 use sdcard::{Cid, Csd, Scr, Sdcard};
 use sdmmc_capability::{
     SdcardCapability, SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_EMPTY_CAP,
@@ -802,7 +802,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         // The use of fence here is actually wrong
         // As the fence(Ordering::Acquire) on arm platform
-        // The cache maintenance instructions are not ordered 
+        // The cache maintenance instructions are not ordered
         // by the Load-Acquire and Store-Release instructions
         // But I will just leave it here as I cannot figure out
         // A more elegant way and code works fine anyway

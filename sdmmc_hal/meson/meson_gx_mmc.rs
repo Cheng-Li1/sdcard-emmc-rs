@@ -2,7 +2,7 @@ use core::ptr;
 
 use sdmmc_protocol::{
     sdmmc::{
-        mmc_struct::{MmcBusWidth, MmcTiming, TuningState},
+        mmc_struct::{MmcBusWidth, MmcTiming},
         sdcard::Sdcard,
         sdmmc_capability::{
             MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY,

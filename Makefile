@@ -5,7 +5,7 @@
 #
 
 # Configurable variables with default values, can be overridden when running `make`
-MICROKIT_SDK ?= /home/li/Sel4/microkit-sdk-1.4.1
+MICROKIT_SDK ?= /home/li/Sel4/microkit-sdk-2.0.1
 BUILD ?= build
 BOARD ?= odroidc4
 
