@@ -8,9 +8,9 @@ use core::{
 use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming};
 use sdcard::{Cid, Csd, Scr, Sdcard};
 use sdmmc_capability::{
-    SdcardCapability, SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_CAP_VOLTAGE_TUNE, MMC_EMPTY_CAP,
-    MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50, MMC_TIMING_UHS_SDR104,
-    MMC_TIMING_UHS_SDR12, MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50,
+    SdcardCapability, SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_EMPTY_CAP, MMC_TIMING_LEGACY,
+    MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50, MMC_TIMING_UHS_SDR104, MMC_TIMING_UHS_SDR12,
+    MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50,
 };
 use sdmmc_constant::{
     MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_ERASE, MMC_CMD_GO_IDLE_STATE,
@@ -361,9 +361,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
             if self
                 .host_capability
-                .contains(sdmmc_capability::SdmmcHostCapability(
-                    MMC_TIMING_UHS_SDR12 | MMC_CAP_VOLTAGE_TUNE,
-                ))
+                .contains(sdmmc_capability::SdmmcHostCapability(MMC_TIMING_UHS_SDR12))
+                && voltage_switch == true
             {
                 cmd.cmdarg |= OCR_S18R;
                 // It seems that cards will not respond to commands that have MMC_VDD_165_195 bit set, even if the card supports UHS-I

@@ -5,8 +5,8 @@ use sdmmc_protocol::{
         mmc_struct::{MmcBusWidth, MmcTiming},
         sdcard::Sdcard,
         sdmmc_capability::{
-            MMC_CAP_4_BIT_DATA, MMC_CAP_CMD23, MMC_CAP_VOLTAGE_TUNE, MMC_TIMING_LEGACY,
-            MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34,
+            MMC_CAP_4_BIT_DATA, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS,
+            MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34,
         },
         HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
         SdmmcError,
@@ -432,12 +432,7 @@ impl SdmmcMesonHardware {
 
 impl SdmmcHardware for SdmmcMesonHardware {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
-        let cap: u128 = MMC_TIMING_LEGACY
-            | MMC_TIMING_SD_HS
-            | MMC_TIMING_UHS
-            | MMC_CAP_VOLTAGE_TUNE
-            | MMC_CAP_4_BIT_DATA
-            | MMC_CAP_CMD23;
+        let cap: u128 = MMC_TIMING_LEGACY | MMC_TIMING_SD_HS | MMC_TIMING_UHS | MMC_CAP_4_BIT_DATA;
 
         // Reset host state
         self.meson_reset();
@@ -847,7 +842,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         unsafe {
             value = ptr::read_volatile(AO_RTI_PULL_UP_EN_REG as *const u32);
         }
-        value &= !(1 << 6); // Disable pull-up/down for gpioAO_6
+        value &= !(1 << 6);
         unsafe {
             ptr::write_volatile(AO_RTI_PULL_UP_EN_REG as *mut u32, value);
         }
