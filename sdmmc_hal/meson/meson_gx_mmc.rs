@@ -734,9 +734,9 @@ impl SdmmcHardware for SdmmcMesonHardware {
             debug_log!("cmd idx: {}\n", cmd.cmdidx);
             debug_log!("cmd arg: 0x{:x}\n", cmd.cmdarg);
 
-            debug_log!("Odroidc4 status register: 0x{:08}\n", status);
+            debug_log!("Odroidc4 status register: 0x{:08x}\n", status);
 
-            debug_log!("Card's first response register: 0x{:08}\n", response[0]);
+            debug_log!("Card's first response register: 0x{:08x}\n", response[0]);
 
             if (status & STATUS_RESP_TIMEOUT) != 0 {
                 debug_log!("SDMMC: CARD TIMEOUT!\n");
