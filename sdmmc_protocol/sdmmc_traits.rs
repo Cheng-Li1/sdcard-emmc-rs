@@ -5,11 +5,12 @@ use crate::sdmmc::{
     HostInfo, MmcData, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError,
 };
 
-const POLLING_INTERVAL_TIME_US: u32 = 1024;
+// const POLLING_INTERVAL_TIME_US: u32 = 1024;
 const DATA_TRANSFER_POLLING_INTERVAL_TIME_US: u32 = 4096;
+
 // The polling chances before time out is deliberately being set to a large value
 //  as the host is supposed to catch thetimeout request and report to us
-const POLLING_CHANCE_BEFORE_TIME_OUT: u32 = 1024;
+const POLLING_CHANCE_BEFORE_TIME_OUT: u32 = 10240;
 const DATA_TRANSFER_POLLING_CHANCE_BEFORE_TIME_OUT: u32 = 2048;
 
 #[allow(unused_variables)]
@@ -168,7 +169,12 @@ pub trait SdmmcHardware {
                 // The flow without data transfer
                 None => {
                     for _ in 0..POLLING_CHANCE_BEFORE_TIME_OUT {
-                        process_wait_unreliable(POLLING_INTERVAL_TIME_US as u64 * 1000);
+                        // There seems to be card that are actually time-sensitive to certain command
+                        // Like if the driver polling the voltage switch command too slow and switch voltage a bit late
+                        // Card will not switch voltage successfully.
+                        // So choosing the fitting polling interval here is very important to correctness
+                        // For correctness reason, right now we don't add any polling interval
+                        // process_wait_unreliable(POLLING_INTERVAL_TIME_US as u64 * 1000);
                         res = self.sdmmc_receive_response(cmd, resp);
                         match res {
                             Err(SdmmcError::ETIMEDOUT) => {
