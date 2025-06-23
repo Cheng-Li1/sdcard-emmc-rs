@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod sddf_blk;
+mod sel4_microkit_os;
 
 use core::{
     future::Future,
