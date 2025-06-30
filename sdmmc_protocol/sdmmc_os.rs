@@ -40,7 +40,7 @@ pub trait VoltageSwitch {
         core::panic!("Voltage switch not implemented!");
     }
 
-    fn card_power_cycling(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {
+    fn card_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {
         core::panic!("Power cycling not implemented!");
     }
 }

@@ -1,8 +1,11 @@
-use sel4_microkit_support::{debug_log, process_wait_unreliable};
+use sel4_microkit_support::debug_log;
 
-use crate::sdmmc::{
-    mmc_struct::{MmcBusWidth, MmcTiming},
-    HostInfo, MmcData, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError,
+use crate::{
+    sdmmc::{
+        mmc_struct::{MmcBusWidth, MmcTiming},
+        HostInfo, MmcData, MmcIos, SdmmcCmd, SdmmcError,
+    },
+    sdmmc_os::Sleep,
 };
 
 // const POLLING_INTERVAL_TIME_US: u32 = 1024;
@@ -14,13 +17,8 @@ const POLLING_CHANCE_BEFORE_TIME_OUT: u32 = 10240;
 const DATA_TRANSFER_POLLING_CHANCE_BEFORE_TIME_OUT: u32 = 2048;
 
 #[allow(unused_variables)]
-/// Program async Rust can be very dangerous if you do not know what is happening understand the hood
-/// Power up and power off cannot be properly implemented if I do not have access to control gpio/ regulator and timer
+/// Trait to be implemented by the sdcard hal
 pub trait SdmmcHardware {
-    fn sdmmc_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
-    }
-
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
@@ -34,10 +32,6 @@ pub trait SdmmcHardware {
     }
 
     fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
-    }
-
-    fn sdmmc_set_signal_voltage(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
 
@@ -123,7 +117,11 @@ pub trait SdmmcHardware {
     /// signals sent from the host to the SD card. This would ensure that the SD card reliably receives data, especially
     /// at high frequencies. However, output timing tends to be more stable, and a specific function for tuning host-to-card
     /// data timing is often not implemented or needed, as seen in the Linux driver.
-    fn sdmmc_execute_tuning(&mut self, memory: *mut [u8; 64]) -> Result<(), SdmmcError> {
+    fn sdmmc_execute_tuning(
+        &mut self,
+        memory: *mut [u8; 64],
+        sleep: &mut dyn Sleep,
+    ) -> Result<(), SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
 
@@ -133,6 +131,7 @@ pub trait SdmmcHardware {
 
     fn sdmmc_do_request(
         &mut self,
+        sleep: &mut dyn Sleep,
         cmd: &SdmmcCmd,
         data: Option<&MmcData>,
         resp: &mut [u32; 4],
@@ -148,9 +147,7 @@ pub trait SdmmcHardware {
                 // The flow with data transfer
                 Some(_) => {
                     for _ in 0..DATA_TRANSFER_POLLING_CHANCE_BEFORE_TIME_OUT {
-                        process_wait_unreliable(
-                            DATA_TRANSFER_POLLING_INTERVAL_TIME_US as u64 * 1000,
-                        );
+                        sleep.usleep(DATA_TRANSFER_POLLING_INTERVAL_TIME_US);
                         res = self.sdmmc_receive_response(cmd, resp);
                         match res {
                             Err(SdmmcError::ETIMEDOUT) => {

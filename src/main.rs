@@ -17,15 +17,23 @@ use sddf_blk::{
     blk_dequeue_req_helper, blk_enqueue_resp_helper, blk_queue_empty_req_helper,
     blk_queue_full_resp_helper, blk_queue_init_helper, BlkOp, BlkRequest, BlkStatus,
 };
+use sddf_timer::timer::Timer;
 use sdmmc_hal::meson_gx_mmc::SdmmcMesonHardware;
 
 use sdmmc_protocol::sdmmc::{SdmmcError, SdmmcProtocol};
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
+use crate::sel4_microkit_os::odroidc4::Odroidc4VoltageSwitch;
+
 const BLK_VIRTUALIZER: sel4_microkit::Channel = sel4_microkit::Channel::new(0);
 
 const INTERRUPT: sel4_microkit::Channel = sel4_microkit::Channel::new(1);
+
+const TIMER_CHANNEL_INDEX: usize = 2;
+const TIMER: Timer = Timer::new(sel4_microkit::Channel::new(TIMER_CHANNEL_INDEX));
+
+const VOLTAGE: Odroidc4VoltageSwitch = Odroidc4VoltageSwitch {};
 
 const SDCARD_SECTOR_SIZE: u32 = 512;
 const SDDF_TRANSFER_SIZE: u32 = 4096;
@@ -87,7 +95,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     assert!(physical_memory_addr as usize % 8 == 0);
 
     // Handling result in two different ways, by matching and unwrap_or_else
-    let res = SdmmcProtocol::new(meson_hal);
+    let res = SdmmcProtocol::new(meson_hal, TIMER, VOLTAGE);
     let mut sdmmc_host = match res {
         Ok(host) => host,
         Err(err) => panic!("SDMMC: Error at init {:?}", err),
@@ -117,7 +125,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     }
 
     // Should always succeed, at least for odroid C4
-    let _ = sdmmc_host.config_interrupt(true, false);
+    sdmmc_host.config_interrupt(true, false).unwrap();
     HandlerImpl {
         future: None,
         sdmmc: Some(sdmmc_host),

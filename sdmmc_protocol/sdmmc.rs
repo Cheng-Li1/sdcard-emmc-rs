@@ -29,9 +29,12 @@ use sdmmc_constant::{
     SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE,
 };
 
-use crate::sdmmc_traits::SdmmcHardware;
+use crate::{
+    sdmmc_os::{Sleep, VoltageSwitch},
+    sdmmc_traits::SdmmcHardware,
+};
 
-use crate::sdmmc_os::{debug_log, process_wait_unreliable};
+use crate::sdmmc_os::debug_log;
 
 pub mod mmc_struct;
 pub mod sd_ops;
@@ -84,6 +87,9 @@ const MMC_RSP_136: u32 = 1 << 1; // 136-bit response
 const MMC_RSP_CRC: u32 = 1 << 2; // Expect valid CRC
 const MMC_RSP_BUSY: u32 = 1 << 3; // Card may send busy
 const MMC_RSP_OPCODE: u32 = 1 << 4; // Response contains opcode
+
+// How many times should we try to init the card
+const CARD_INIT_RETRY: u16 = 2;
 
 // Define the MMC response types
 pub const MMC_RSP_NONE: u32 = 0;
@@ -257,8 +263,12 @@ pub struct HostInfo {
 }
 
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
-pub struct SdmmcProtocol<T: SdmmcHardware> {
-    pub hardware: T,
+pub struct SdmmcProtocol<T: SdmmcHardware, S: Sleep, V: VoltageSwitch> {
+    hardware: T,
+
+    sleep: S,
+
+    voltage_ops: Option<V>,
 
     mmc_ios: MmcIos,
 
@@ -272,14 +282,22 @@ pub struct SdmmcProtocol<T: SdmmcHardware> {
     private_memory: Option<*mut [u8; 64]>,
 }
 
-impl<T> Unpin for SdmmcProtocol<T> where T: Unpin + SdmmcHardware {}
+impl<T, S, V> Unpin for SdmmcProtocol<T, S, V>
+where
+    T: Unpin + SdmmcHardware,
+    S: Unpin + Sleep,
+    V: Unpin + VoltageSwitch,
+{
+}
 
-impl<T: SdmmcHardware> SdmmcProtocol<T> {
-    pub fn new(mut hardware: T) -> Result<Self, SdmmcError> {
+impl<T: SdmmcHardware, S: Sleep, V: VoltageSwitch> SdmmcProtocol<T, S, V> {
+    pub fn new(mut hardware: T, sleep: S, voltage_ops: Option<V>) -> Result<Self, SdmmcError> {
         let (ios, info, cap) = hardware.sdmmc_init()?;
 
         Ok(SdmmcProtocol {
             hardware,
+            sleep,
+            voltage_ops,
             mmc_ios: ios,
             host_info: info,
             host_capability: SdmmcHostCapability(cap),
@@ -303,7 +321,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         self.hardware.sdmmc_send_command(&cmd, None)?;
 
         // Linux use 1ms delay here, we use 2ms
-        process_wait_unreliable(2_000_000);
+        self.sleep.usleep(2_000);
 
         debug_log!("Try to send check operating voltage cmd\n");
 
@@ -313,7 +331,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0x000001AA, // Voltage supply and check pattern
         };
 
-        let res: Result<(), SdmmcError> = self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1);
+        let res: Result<(), SdmmcError> =
+            self.hardware
+                .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 1);
 
         // If the result is OK and the resp is 0x1AA, the card we are initializing is a SDHC/SDXC
         // If the result is error, it is either the voltage not being set up correctly, which mean a bug in hardware layer
@@ -336,7 +356,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             };
 
             // Send CMD55
-            let res = self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0);
+            let res = self
+                .hardware
+                .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 0);
 
             match res {
                 Ok(_) => {}
@@ -370,7 +392,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             }
 
             // Send ACMD41
-            self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0)?;
+            self.hardware
+                .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 0)?;
 
             debug_log!("OCR: {:08x}\n", resp[0]);
 
@@ -403,14 +426,19 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         Ok(())
     }
 
-    fn sdmmc_power_cycle(&mut self) -> Result<(), SdmmcError> {
-        self.hardware.sdmmc_set_power(MmcPowerMode::Off)?;
-        process_wait_unreliable(self.host_info.power_delay_ms as u64 * 1_000_000);
+    fn sdmmc_power_cycle(
+        sleep: &mut S,
+        voltage_ops: &mut V,
+        power_delay_ms: u32,
+    ) -> Result<(), SdmmcError> {
+        voltage_ops.card_set_power(MmcPowerMode::Off)?;
 
-        self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
-        process_wait_unreliable(1_000_000);
+        sleep.usleep(power_delay_ms * 1_000);
 
-        self.mmc_ios.power_mode = MmcPowerMode::On;
+        voltage_ops.card_set_power(MmcPowerMode::On)?;
+
+        sleep.usleep(power_delay_ms * 1_000);
+
         Ok(())
     }
 
@@ -421,14 +449,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         // TODO: Different sdcard and eMMC support different voltages, figure those out
         if self.mmc_ios.power_mode != MmcPowerMode::On {
-            debug_log!("Turn the power up");
-            self.hardware.sdmmc_set_power(MmcPowerMode::On)?;
-            // TODO: Right now we know the power will always be up and this function should not be called
-            // But when we encounter scenerio that may actually call this function, we should wait for the time specified in ios
-            // Right now this whole power up related thing does not work
-            process_wait_unreliable(self.host_info.power_delay_ms as u64 * 1_000_000);
-
-            self.mmc_ios.power_mode = MmcPowerMode::On;
+            return Err(SdmmcError::EINVAL);
         }
 
         let clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
@@ -440,37 +461,51 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
 
         self.mmc_ios.bus_width = MmcBusWidth::Width1;
 
-        let mut voltage_switch: bool = true;
-
         // Use labeled block here for better clarification
+        // For card initialization, we retry 2 times for each card
         // There could be more complex retry logic implemented in the future
-        'sdcard_init: loop {
-            match self.sdcard_init(voltage_switch) {
-                Ok(()) => {}
-                Err(SdmmcError::EUNSUPPORTEDCARD) => {
-                    break 'sdcard_init;
-                }
-                Err(_) => {
-                    if voltage_switch == true {
-                        voltage_switch = false;
-
-                        // Retry with voltage switch off
-                        debug_log!("Try to init the card without voltage switch\n");
-                        self.sdmmc_power_cycle()?;
-
-                        self.mmc_ios = self.hardware.sdmmc_host_reset()?;
-
-                        // One bug that does not break anything here is
-                        // sdmmc_host_reset will reset the clock to CardSetup timing and turn off the irq
-                        // But those variable in mmc_ios is not changed accordingly
-
-                        continue 'sdcard_init;
-                    } else {
-                        break 'sdcard_init;
+        let res: Result<(), SdmmcError> = 'sdcard_init: {
+            let mut voltage_switch_init: bool = true;
+            let mut init_error: SdmmcError = SdmmcError::EUNSUPPORTEDCARD;
+            for _ in 0..CARD_INIT_RETRY {
+                match self.voltage_ops {
+                    Some(_) => {
+                        match self.sdcard_init(voltage_switch_init) {
+                            Ok(()) => break 'sdcard_init Ok(()),
+                            Err(SdmmcError::EUNSUPPORTEDCARD) => {
+                                break 'sdcard_init Err(SdmmcError::EUNSUPPORTEDCARD);
+                            }
+                            Err(e) => {
+                                init_error = e;
+                                // This unwrap should always succeed as long as sdcard_init does not try to move the voltage_ops out
+                                Self::sdmmc_power_cycle(
+                                    &mut self.sleep,
+                                    self.voltage_ops.as_mut().unwrap(),
+                                    self.host_info.power_delay_ms,
+                                )?;
+                                // One bug that does not break anything here is
+                                // sdmmc_host_reset will reset the clock to CardSetup timing and turn off the irq
+                                // But those variable in mmc_ios is not changed accordingly
+                                self.mmc_ios = self.hardware.sdmmc_host_reset()?;
+                                voltage_switch_init = false;
+                            }
+                        }
                     }
+                    None => match self.sdcard_init(false) {
+                        Ok(()) => break 'sdcard_init Ok(()),
+                        Err(SdmmcError::EUNSUPPORTEDCARD) => {
+                            break 'sdcard_init Err(SdmmcError::EUNSUPPORTEDCARD);
+                        }
+                        Err(e) => {
+                            init_error = e;
+                        }
+                    },
                 }
             }
+            Err(init_error)
+        };
 
+        if res.is_ok() {
             let card: Sdcard = self.setup_sdcard_cont()?;
             self.mmc_device = Some(MmcDevice::Sdcard(card));
             return Ok(());
@@ -483,7 +518,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             // For now, we only deal with the situation it is a sdcard
             // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
             debug_log!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!\n");
-            Err(SdmmcError::EUNSUPPORTEDCARD)
+            res
         }
     }
 
@@ -503,7 +538,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R2,
             cmdarg: 0,
         };
-        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1)?;
+        self.hardware
+            .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 1)?;
 
         let cid: Cid = Cid::new(resp);
 
@@ -528,7 +564,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: 0,
         };
 
-        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1)?;
+        self.hardware
+            .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 1)?;
 
         let rca: u16 = (resp[0] >> 16) as u16; // Store RCA from response
 
@@ -541,7 +578,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: (rca as u32) << 16,
         };
 
-        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1)?;
+        self.hardware
+            .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 1)?;
 
         debug_log!(
             "CSD: {:08x} {:08x} {:08x} {:08x}\n",
@@ -560,7 +598,8 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg: (rca as u32) << 16,
         };
 
-        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 1)?;
+        self.hardware
+            .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 1)?;
 
         // SDHC/SDXC default to 512 bytes sector size so I did not manually set it here
 
@@ -682,9 +721,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             resp_type: MMC_RSP_R1,
             cmdarg: cmd_arg as u32,
         };
-        if let Err(error) = self
-            .hardware
-            .sdmmc_do_request(&cmd, Some(&data), &mut resp, 0)
+        if let Err(error) =
+            self.hardware
+                .sdmmc_do_request(&mut self.sleep, &cmd, Some(&data), &mut resp, 0)
         {
             debug_log!("Error in reading\n");
         }
@@ -694,67 +733,71 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
     /// Switch voltage function
     fn tune_sdcard_switch_uhs18v(&mut self) -> Result<(), SdmmcError> {
         debug_log!("Entering tune sdcard signal voltage function!\n");
-        let mut resp: [u32; 4] = [0; 4];
-        let cmd = SdmmcCmd {
-            cmdidx: SD_CMD_SWITCH_UHS18V,
-            resp_type: MMC_RSP_R1,
-            cmdarg: 0, // Argument for 4-bit mode (0 for 1-bit mode)
-        };
 
-        self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0)?;
+        if let Some(ref mut voltage_ops) = self.voltage_ops {
+            let mut resp: [u32; 4] = [0; 4];
+            let cmd = SdmmcCmd {
+                cmdidx: SD_CMD_SWITCH_UHS18V,
+                resp_type: MMC_RSP_R1,
+                cmdarg: 0, // Argument for 4-bit mode (0 for 1-bit mode)
+            };
 
-        debug_log!("Switch voltage prepared!\n");
-
-        self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
-
-        // TODO: figuring out the optimal delay
-        process_wait_unreliable(100_000);
-
-        let mut signal: u8 = 0xFF;
-
-        for _ in 0..100 {
-            signal = self.hardware.sdmmc_read_datalanes()?;
-            // TODO: figuring out the optimal delay
-            process_wait_unreliable(100_000);
-            debug_log!("data signal value: 0b{:b}\n", signal);
-            if signal & 0xF == 0x0 {
-                break;
-            }
-        }
-
-        if signal & 0xF != 0x0 {
-            return Err(SdmmcError::ECARDINACTIVE);
-        }
-
-        self.hardware
-            .sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage180)?;
-
-        // TODO: figuring out the optimal delay
-        process_wait_unreliable(10_000_000);
-
-        self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
-
-        // TODO: figuring out the optimal delay
-        process_wait_unreliable(100_000);
-
-        for _ in 0..100 {
-            signal = self.hardware.sdmmc_read_datalanes()?;
-            // TODO: figuring out the optimal delay
-            process_wait_unreliable(100_000);
-            debug_log!("data signal value: 0b{:b}\n", signal);
-            if signal & 0xF == 0xF {
-                break;
-            }
-        }
-
-        if signal & 0xF != 0xF {
             self.hardware
-                .sdmmc_set_signal_voltage(MmcSignalVoltage::Voltage330)?;
-            process_wait_unreliable(1_000_000);
-            return Err(SdmmcError::ECARDINACTIVE);
-        }
+                .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 0)?;
 
-        Ok(())
+            debug_log!("Switch voltage prepared!\n");
+
+            self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
+
+            // TODO: figuring out the optimal delay
+            self.sleep.usleep(100);
+
+            let mut signal: u8 = 0xFF;
+
+            for _ in 0..100 {
+                signal = self.hardware.sdmmc_read_datalanes()?;
+                // TODO: figuring out the optimal delay
+                self.sleep.usleep(100);
+                debug_log!("data signal value: 0b{:b}\n", signal);
+                if signal & 0xF == 0x0 {
+                    break;
+                }
+            }
+
+            if signal & 0xF != 0x0 {
+                return Err(SdmmcError::ECARDINACTIVE);
+            }
+
+            voltage_ops.card_voltage_switch(MmcSignalVoltage::Voltage180)?;
+
+            // TODO: figuring out the optimal delay
+            self.sleep.usleep(10_000);
+
+            self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
+
+            // TODO: figuring out the optimal delay
+            self.sleep.usleep(100);
+
+            for _ in 0..100 {
+                signal = self.hardware.sdmmc_read_datalanes()?;
+                // TODO: figuring out the optimal delay
+                self.sleep.usleep(100);
+                debug_log!("data signal value: 0b{:b}\n", signal);
+                if signal & 0xF == 0xF {
+                    break;
+                }
+            }
+
+            if signal & 0xF != 0xF {
+                voltage_ops.card_voltage_switch(MmcSignalVoltage::Voltage330)?;
+                self.sleep.usleep(1_000);
+                return Err(SdmmcError::ECARDINACTIVE);
+            }
+
+            Ok(())
+        } else {
+            Err(SdmmcError::EUNSUPPORTEDCARD)
+        }
     }
 
     /// Right now the speed switch is done hackily
@@ -797,7 +840,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             cmdarg,
         };
         self.hardware
-            .sdmmc_do_request(&cmd, Some(&data), &mut resp, 0)?;
+            .sdmmc_do_request(&mut self.sleep, &cmd, Some(&data), &mut resp, 0)?;
 
         // The use of fence here is actually wrong
         // As the fence(Ordering::Acquire) on arm platform
@@ -844,7 +887,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         };
 
         self.hardware
-            .sdmmc_do_request(&cmd, Some(&data), &mut resp, 0)?;
+            .sdmmc_do_request(&mut self.sleep, &cmd, Some(&data), &mut resp, 0)?;
 
         core::sync::atomic::fence(Ordering::Acquire);
 
@@ -901,6 +944,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             let scr: Scr = unsafe {
                 Sdcard::sdcard_get_configuration_register(
                     &mut self.hardware,
+                    &mut self.sleep,
                     physical_memory_addr,
                     memory,
                     cache_invalidate_function,
@@ -933,14 +977,16 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                 resp_type: MMC_RSP_R1,
                 cmdarg: (relative_card_address as u32) << 16,
             };
-            self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0)?;
+            self.hardware
+                .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 0)?;
 
             let cmd = SdmmcCmd {
                 cmdidx: SD_CMD_APP_SET_BUS_WIDTH,
                 resp_type: MMC_RSP_R1,
                 cmdarg: 2, // Argument for 4-bit mode (0 for 1-bit mode)
             };
-            self.hardware.sdmmc_do_request(&cmd, None, &mut resp, 0)?;
+            self.hardware
+                .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 0)?;
 
             self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width4)?;
 
@@ -1059,7 +1105,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
             self.mmc_ios.clock = self.hardware.sdmmc_config_timing(target_timing)?;
 
             self.hardware
-                .sdmmc_execute_tuning(physical_memory_addr as *mut [u8; 64])?;
+                .sdmmc_execute_tuning(physical_memory_addr as *mut [u8; 64], &mut self.sleep)?;
 
             debug_log!("Current frequency: {}Hz\n", self.mmc_ios.clock);
         } else {
@@ -1091,7 +1137,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         blockcnt: u32,
         start_idx: u64,
         destination: u64,
-    ) -> (Result<(), SdmmcError>, SdmmcProtocol<T>) {
+    ) -> (Result<(), SdmmcError>, SdmmcProtocol<T, S, V>) {
         let trans_meth: BlockTransmissionMode = {
             if let Some(ref device) = self.mmc_device {
                 match device {
@@ -1175,7 +1221,9 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
                         if let Some(memory) = self.private_memory {
                             if turing == false {
                                 turing = true;
-                                if let Ok(()) = self.hardware.sdmmc_execute_tuning(memory) {
+                                if let Ok(()) =
+                                    self.hardware.sdmmc_execute_tuning(memory, &mut self.sleep)
+                                {
                                     continue;
                                 }
                             }
@@ -1196,7 +1244,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         blockcnt: u32,
         start_idx: u64,
         source: u64,
-    ) -> (Result<(), SdmmcError>, SdmmcProtocol<T>) {
+    ) -> (Result<(), SdmmcError>, SdmmcProtocol<T, S, V>) {
         let trans_meth: BlockTransmissionMode = {
             if let Some(ref device) = self.mmc_device {
                 match device {
@@ -1268,7 +1316,7 @@ impl<T: SdmmcHardware> SdmmcProtocol<T> {
         mut self,
         start_idx: u64,
         end_idx: u64,
-    ) -> (Result<(), SdmmcError>, SdmmcProtocol<T>) {
+    ) -> (Result<(), SdmmcError>, SdmmcProtocol<T, S, V>) {
         let mut cmd: SdmmcCmd;
         let mut res: Result<(), SdmmcError>;
 
