@@ -20,8 +20,11 @@ use sddf_blk::{
 use sddf_timer::timer::Timer;
 use sdmmc_hal::meson_gx_mmc::SdmmcMesonHardware;
 
-use sdmmc_protocol::sdmmc::{SdmmcError, SdmmcProtocol};
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
+use sdmmc_protocol::{
+    sdmmc::{SdmmcError, SdmmcProtocol},
+    sdmmc_os::{Sleep, VoltageOps},
+};
 use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
 use crate::sel4_microkit_os::odroidc4::Odroidc4VoltageSwitch;
@@ -77,7 +80,7 @@ fn create_dummy_waker() -> Waker {
 }
 
 #[protection_domain(heap_size = 0x10000)]
-fn init() -> HandlerImpl<SdmmcMesonHardware> {
+fn init() -> impl Handler {
     debug_println!("Driver init!");
     unsafe {
         blk_queue_init_helper();
@@ -95,7 +98,11 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     assert!(physical_memory_addr as usize % 8 == 0);
 
     // Handling result in two different ways, by matching and unwrap_or_else
-    let res = SdmmcProtocol::new(meson_hal, TIMER, VOLTAGE);
+    let res = SdmmcProtocol::new(
+        meson_hal,
+        sel4_microkit_os::TimerOps::new(TIMER),
+        Some(VOLTAGE),
+    );
     let mut sdmmc_host = match res {
         Ok(host) => host,
         Err(err) => panic!("SDMMC: Error at init {:?}", err),
@@ -126,6 +133,7 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
 
     // Should always succeed, at least for odroid C4
     sdmmc_host.config_interrupt(true, false).unwrap();
+
     HandlerImpl {
         future: None,
         sdmmc: Some(sdmmc_host),
@@ -134,14 +142,16 @@ fn init() -> HandlerImpl<SdmmcMesonHardware> {
     }
 }
 
-struct HandlerImpl<T: SdmmcHardware> {
-    future: Option<Pin<Box<dyn Future<Output = (Result<(), SdmmcError>, SdmmcProtocol<T>)>>>>,
-    sdmmc: Option<SdmmcProtocol<T>>,
+struct HandlerImpl<T: SdmmcHardware, S: Sleep, V: VoltageOps> {
+    future: Option<Pin<Box<dyn Future<Output = (Result<(), SdmmcError>, SdmmcProtocol<T, S, V>)>>>>,
+    sdmmc: Option<SdmmcProtocol<T, S, V>>,
     request: Option<BlkRequest>,
     retry: u16,
 }
 
-impl<T: SdmmcHardware + 'static> Handler for HandlerImpl<T> {
+impl<T: SdmmcHardware + 'static, S: Sleep + 'static, V: VoltageOps + 'static> Handler
+    for HandlerImpl<T, S, V>
+{
     type Error = Infallible;
 
     fn notified(&mut self, channel: Channel) -> Result<(), Self::Error> {

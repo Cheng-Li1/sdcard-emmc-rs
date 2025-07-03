@@ -35,7 +35,7 @@ pub trait Sleep {
     }
 }
 
-pub trait VoltageSwitch {
+pub trait VoltageOps {
     fn card_voltage_switch(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
         core::panic!("Voltage switch not implemented!");
     }

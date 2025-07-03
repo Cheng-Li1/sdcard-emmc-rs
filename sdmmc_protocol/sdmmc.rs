@@ -30,7 +30,7 @@ use sdmmc_constant::{
 };
 
 use crate::{
-    sdmmc_os::{Sleep, VoltageSwitch},
+    sdmmc_os::{Sleep, VoltageOps},
     sdmmc_traits::SdmmcHardware,
 };
 
@@ -263,7 +263,7 @@ pub struct HostInfo {
 }
 
 /// TODO: Add more variables for SdmmcProtocol to track the state of the sdmmc controller and card correctly
-pub struct SdmmcProtocol<T: SdmmcHardware, S: Sleep, V: VoltageSwitch> {
+pub struct SdmmcProtocol<T: SdmmcHardware, S: Sleep, V: VoltageOps> {
     hardware: T,
 
     sleep: S,
@@ -286,11 +286,11 @@ impl<T, S, V> Unpin for SdmmcProtocol<T, S, V>
 where
     T: Unpin + SdmmcHardware,
     S: Unpin + Sleep,
-    V: Unpin + VoltageSwitch,
+    V: Unpin + VoltageOps,
 {
 }
 
-impl<T: SdmmcHardware, S: Sleep, V: VoltageSwitch> SdmmcProtocol<T, S, V> {
+impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
     pub fn new(mut hardware: T, sleep: S, voltage_ops: Option<V>) -> Result<Self, SdmmcError> {
         let (ios, info, cap) = hardware.sdmmc_init()?;
 
@@ -589,7 +589,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageSwitch> SdmmcProtocol<T, S, V> {
             resp[3]
         );
 
-        let (csd, card_version) = Csd::new(resp);
+        let (csd, card_version) = Csd::new(resp)?;
 
         // Send CMD7 to select the card
         cmd = SdmmcCmd {

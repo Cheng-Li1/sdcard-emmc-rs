@@ -2,7 +2,7 @@ use core::ptr;
 
 use sdmmc_protocol::{
     sdmmc::{MmcPowerMode, MmcSignalVoltage, SdmmcError},
-    sdmmc_os::VoltageSwitch,
+    sdmmc_os::VoltageOps,
 };
 
 pub struct Odroidc4VoltageSwitch;
@@ -20,7 +20,7 @@ const AO_RTI_PULL_UP_EN_REG: u64 = 0xff800030;
 const GPIO_AO_3: u32 = 1 << 3;
 const GPIO_AO_6: u32 = 1 << 6;
 
-impl VoltageSwitch for Odroidc4VoltageSwitch {
+impl VoltageOps for Odroidc4VoltageSwitch {
     fn card_voltage_switch(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
         match voltage {
             MmcSignalVoltage::Voltage330 => {

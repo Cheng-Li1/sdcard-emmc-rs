@@ -5,7 +5,7 @@
 #
 
 # Configurable variables with default values, can be overridden when running `make`
-MICROKIT_SDK ?= /home/li/Sel4/microkit-sdk-2.0.1
+MICROKIT_SDK ?= /home/cheng/system/microkit-sdk-2.0.1
 BUILD ?= target
 BOARD ?= odroidc4
 
@@ -19,7 +19,7 @@ microkit_sdk_config_dir := $(MICROKIT_SDK)/board/$(MICROKIT_BOARD)/$(MICROKIT_CO
 sel4_include_dirs := $(microkit_sdk_config_dir)/include
 
 # Target output
-TARGET_ELF := $(BUILD_DIR)/aarch64-sel4-microkit-minimal/debug/sdmmc_driver.elf
+TARGET_ELF := $(BUILD_DIR)/debug/sdmmc_driver.elf
 
 # Default target if none is provided
 .PHONY: none
@@ -60,4 +60,4 @@ build: $(IMAGE_FILE)
 	@echo "Build finished successfully."
 
 $(IMAGE_FILE) $(REPORT_FILE): $(TARGET_ELF) ./mmc.system
-	$(MICROKIT_TOOL) ./mmc.system --search-path $(BUILD_DIR)/target/aarch64-sel4-microkit-minimal/debug --board $(MICROKIT_BOARD) --config $(MICROKIT_CONFIG) -o $(IMAGE_FILE) -r $(REPORT_FILE)
+	$(MICROKIT_TOOL) ./mmc.system --search-path $(BUILD_DIR)/target/debug --board $(MICROKIT_BOARD) --config $(MICROKIT_CONFIG) -o $(IMAGE_FILE) -r $(REPORT_FILE)

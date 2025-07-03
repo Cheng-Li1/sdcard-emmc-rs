@@ -125,7 +125,7 @@ pub(crate) struct Csd {
 }
 
 impl Csd {
-    pub fn new(csd: [u32; 4]) -> (Csd, SdVersion) {
+    pub fn new(csd: [u32; 4]) -> Result<(Csd, SdVersion), SdmmcError> {
         // Combine the four 32-bit words into a single 128-bit value for easier bit manipulation
         let csd_combined = ((csd[0] as u128) << 96)
             | ((csd[1] as u128) << 64)
@@ -138,8 +138,8 @@ impl Csd {
             0 => SdVersion::V1_0, // CSD Version 1.0
             1 => SdVersion::V2_0, // CSD Version 2.0
             // Even if the parsing csd fails, it should not crash the driver completely
-            _ => panic!("Unsupported CSD structure version"), // CSD structures beyond 2.0 are not supported here
-                                                              // Actually SDUC card are using CSD 3.0 so maybe add something here later.
+            _ => return Err(SdmmcError::EUNSUPPORTEDCARD), // CSD structures beyond 2.0 are not supported here
+                                                           // Actually SDUC card are using CSD 3.0 so maybe add something here later.
         };
 
         // Parse fields based on CSD version
@@ -180,7 +180,7 @@ impl Csd {
         let supports_partial_write = ((csd_combined >> 21) & 0x1) != 0; // Bit 21
 
         // Return the constructed CSD struct along with the SD version
-        (
+        Ok((
             Csd {
                 csd_structure,
                 card_capacity,
@@ -190,7 +190,7 @@ impl Csd {
                 supports_partial_write,
             },
             sd_version,
-        )
+        ))
     }
 }
 

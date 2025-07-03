@@ -12,4 +12,4 @@ path = "lib.rs"
 # such as providing improved debugging output and more efficient sleep functions 
 # (as opposed to simple spin-wait).
 [dependencies]
-sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "a12b43ee359ed8f1fa7433f0534217da3b83e9ef" }
+sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "ac5627ba7a67e71f33a8eb1c5d05de09bf94ef5e", features = ["alloc"] }
