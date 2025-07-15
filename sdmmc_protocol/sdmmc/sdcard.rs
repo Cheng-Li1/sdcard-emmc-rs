@@ -1,6 +1,6 @@
 use core::fmt::{self, Write};
 
-use sel4_microkit_support::debug_log;
+use crate::debug_log;
 
 use super::{
     mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcState},

@@ -27,7 +27,7 @@ use sdmmc_protocol::{
 };
 use sel4_microkit::{debug_print, debug_println, protection_domain, Channel, Handler, Infallible};
 
-use crate::sel4_microkit_os::odroidc4::Odroidc4VoltageSwitch;
+use crate::sel4_microkit_os::{odroidc4::Odroidc4VoltageSwitch, SerialOps};
 
 const BLK_VIRTUALIZER: sel4_microkit::Channel = sel4_microkit::Channel::new(0);
 
@@ -37,6 +37,7 @@ const TIMER_CHANNEL_INDEX: usize = 2;
 const TIMER: Timer = Timer::new(sel4_microkit::Channel::new(TIMER_CHANNEL_INDEX));
 
 const VOLTAGE: Odroidc4VoltageSwitch = Odroidc4VoltageSwitch {};
+const SERIAL: SerialOps = SerialOps::new();
 
 const SDCARD_SECTOR_SIZE: u32 = 512;
 const SDDF_TRANSFER_SIZE: u32 = 4096;
@@ -82,6 +83,10 @@ fn create_dummy_waker() -> Waker {
 #[protection_domain(heap_size = 0x10000)]
 fn init() -> impl Handler {
     debug_println!("Driver init!");
+    // Enable the debug print
+    unsafe {
+        sdmmc_protocol::sdmmc_os::set_logger(&SERIAL).unwrap();
+    }
     unsafe {
         blk_queue_init_helper();
     }

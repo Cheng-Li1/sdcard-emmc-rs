@@ -30,11 +30,10 @@ use sdmmc_constant::{
 };
 
 use crate::{
+    debug_log,
     sdmmc_os::{Sleep, VoltageOps},
     sdmmc_traits::SdmmcHardware,
 };
-
-use crate::sdmmc_os::debug_log;
 
 pub mod mmc_struct;
 pub mod sd_ops;

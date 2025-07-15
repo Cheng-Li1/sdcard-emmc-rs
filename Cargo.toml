@@ -5,8 +5,9 @@ edition = "2021"
 
 [dependencies]
 sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "ac5627ba7a67e71f33a8eb1c5d05de09bf94ef5e", features = ["alloc"] }
+sel4-panicking-env = { git = "https://github.com/seL4/rust-sel4.git", rev = "ac5627ba7a67e71f33a8eb1c5d05de09bf94ef5e" }
 sdmmc_hal = { path = "sdmmc_hal/meson" }
-sdmmc_protocol = { path = "sdmmc_protocol", features = ["sel4-microkit"] }
+sdmmc_protocol = { path = "sdmmc_protocol"}
 sddf_timer = {git = "https://github.com/au-ts/sddf.git", rev = "660865ab3509a08686a354cea72e1547f05dfe29"}
 
 [build]

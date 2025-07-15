@@ -1,6 +1,7 @@
 use core::ptr;
 
 use sdmmc_protocol::{
+    debug_log,
     sdmmc::{
         mmc_struct::{MmcBusWidth, MmcTiming},
         sdcard::Sdcard,
@@ -11,7 +12,7 @@ use sdmmc_protocol::{
         HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
         SdmmcError,
     },
-    sdmmc_os::{debug_log, process_wait_unreliable, Sleep},
+    sdmmc_os::{process_wait_unreliable, Sleep},
     sdmmc_traits::SdmmcHardware,
 };
 

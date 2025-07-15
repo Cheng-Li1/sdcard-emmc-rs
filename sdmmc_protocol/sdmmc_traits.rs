@@ -1,6 +1,5 @@
-use sel4_microkit_support::debug_log;
-
 use crate::{
+    debug_log,
     sdmmc::{
         mmc_struct::{MmcBusWidth, MmcTiming},
         HostInfo, MmcData, MmcIos, SdmmcCmd, SdmmcError,
