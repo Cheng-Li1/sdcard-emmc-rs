@@ -1,7 +1,6 @@
 use crate::sdmmc::MmcPowerMode;
 use crate::sdmmc::MmcSignalVoltage;
 use crate::sdmmc::SdmmcError;
-use core::sync::atomic::AtomicBool;
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 

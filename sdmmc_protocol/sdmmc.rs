@@ -547,7 +547,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             | ((resp[2] as u128) << 32)
             | (resp[3] as u128);
 
-        // TODO: Figure out a better way to do this than adding microkit crate
+        // Print out the CID number
         debug_log!(
             "CID: {:08x} {:08x} {:08x} {:08x}\n",
             resp[0],
@@ -568,6 +568,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
 
         let rca: u16 = (resp[0] >> 16) as u16; // Store RCA from response
 
+        // Print out the RCA number we have got
         debug_log!("RCA: {:04x}\n", rca);
 
         // Send CMD9 to get the CSD register
@@ -921,7 +922,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             MmcSignalVoltage::Voltage120 => return Err(SdmmcError::EUNDEFINED),
         }
         // Add the card cap to self
-        if let Some(MmcDevice::Sdcard(ref mut sdcard)) = &mut self.mmc_device {
+        if let Some(MmcDevice::Sdcard(sdcard)) = &mut self.mmc_device {
             sdcard.card_cap |= card_cap;
         } else {
             return Err(SdmmcError::EINVAL);
@@ -939,7 +940,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
     ) -> Result<(), SdmmcError> {
         let mut resp: [u32; 4] = [0; 4];
 
-        if let Some(MmcDevice::Sdcard(ref mut sdcard)) = &mut self.mmc_device {
+        if let Some(MmcDevice::Sdcard(sdcard)) = &mut self.mmc_device {
             let scr: Scr = unsafe {
                 Sdcard::sdcard_get_configuration_register(
                     &mut self.hardware,
@@ -1037,7 +1038,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             return Err(SdmmcError::EUNDEFINED);
         }
 
-        let mut target_timing;
+        let mut target_timing: MmcTiming;
         let sdcard_cap: SdcardCapability;
         if let Some(MmcDevice::Sdcard(ref sdcard)) = self.mmc_device {
             debug_log!("Switch to higher speed class\n");

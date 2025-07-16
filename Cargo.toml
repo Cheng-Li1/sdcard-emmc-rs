@@ -1,14 +1,14 @@
 [package]
 name = "sdmmc_driver"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "ac5627ba7a67e71f33a8eb1c5d05de09bf94ef5e", features = ["alloc"] }
-sel4-panicking-env = { git = "https://github.com/seL4/rust-sel4.git", rev = "ac5627ba7a67e71f33a8eb1c5d05de09bf94ef5e" }
+sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "d2bc5cf71c5455f85898a4768e9dcbaea39e1a7e", features = ["alloc"] }
+sel4-panicking-env = { git = "https://github.com/seL4/rust-sel4.git", rev = "d2bc5cf71c5455f85898a4768e9dcbaea39e1a7e" }
 sdmmc_hal = { path = "sdmmc_hal/meson" }
 sdmmc_protocol = { path = "sdmmc_protocol"}
-sddf_timer = {git = "https://github.com/au-ts/sddf.git", rev = "660865ab3509a08686a354cea72e1547f05dfe29"}
+sddf_timer = {git = "https://github.com/au-ts/sddf.git", rev = "373c352a2f906ed436fae779fe503202473c141c"}
 
 [build]
 build = "build.rs"
