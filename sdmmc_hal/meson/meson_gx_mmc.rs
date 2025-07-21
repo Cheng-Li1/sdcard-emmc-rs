@@ -1,19 +1,12 @@
 use core::ptr;
 
 use sdmmc_protocol::{
-    debug_log,
-    sdmmc::{
-        HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
-        SdmmcError,
-        mmc_struct::{MmcBusWidth, MmcTiming},
-        sdcard::Sdcard,
-        sdmmc_capability::{
+    dev_log, info, sdmmc::{
+        mmc_struct::{MmcBusWidth, MmcTiming}, sdcard::Sdcard, sdmmc_capability::{
             MMC_CAP_4_BIT_DATA, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32,
             MMC_VDD_32_33, MMC_VDD_33_34,
-        },
-    },
-    sdmmc_os::{Sleep, process_wait_unreliable},
-    sdmmc_traits::SdmmcHardware,
+        }, HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError
+    }, sdmmc_os::{process_wait_unreliable, Sleep}, sdmmc_traits::SdmmcHardware
 };
 
 pub const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
@@ -302,7 +295,7 @@ impl SdmmcMesonHardware {
             cfg |= data.blocksize.ilog2() << CFG_BL_LEN_SHIFT;
 
             // TODO: Maybe add blocksize is power of 2 check here?
-            // debug_log!("Configure register value: 0x{:08x}", cfg);
+            // dev_log!("Configure register value: 0x{:08x}", cfg);
 
             unsafe {
                 ptr::write_volatile(&mut self.register.cfg, cfg);
@@ -486,7 +479,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
         let mut tried_highest_delay: u32 = current_delay;
 
         loop {
-            debug_log!(
+            dev_log!(
                 "current delay: {}, lowest_tried: {}, highest_tried: {}\n",
                 current_delay,
                 tried_lowest_delay,
@@ -578,7 +571,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
             clk_src = CLK_SRC_24M;
         }
 
-        let clk_div = div_round_up!(clk, clock_freq);
+        let clk_div: u32 = div_round_up!(clk, clock_freq);
         /*
          * From uboot meson_gx_mmc.c
          * SM1 SoCs doesn't work fine over 50MHz with CLK_CO_PHASE_180
@@ -660,7 +653,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
                 || mmc_data.blockcnt == 0
                 || mmc_data.blockcnt > MAX_BLOCK_PER_TRANSFER
             {
-                debug_log!("SDMMC: INVALID INPUT VARIABLE!");
+                info!("SDMMC: INVALID INPUT VARIABLE!");
                 return Err(SdmmcError::EINVAL);
             }
             // Depend on the flag and hardware, the cache should be flushed accordingly
@@ -714,16 +707,16 @@ impl SdmmcHardware for SdmmcMesonHardware {
 
         if (status & STATUS_ERR_MASK) != 0 {
             // For debug
-            debug_log!("SDMMC: Print out error request:\n");
-            debug_log!("cmd idx: {}\n", cmd.cmdidx);
-            debug_log!("cmd arg: 0x{:x}\n", cmd.cmdarg);
+            info!("SDMMC: Print out error request:");
+            info!("cmd idx: {}", cmd.cmdidx);
+            info!("cmd arg: 0x{:x}", cmd.cmdarg);
 
-            debug_log!("Odroidc4 status register: 0x{:08x}\n", status);
+            info!("Odroidc4 status register: 0x{:08x}", status);
 
-            debug_log!("Card's first response register: 0x{:08x}\n", response[0]);
+            info!("Card's first response register: 0x{:08x}", response[0]);
 
             if (status & STATUS_RESP_TIMEOUT) != 0 {
-                debug_log!("SDMMC: CARD TIMEOUT!\n");
+                info!("SDMMC: CARD TIMEOUT!");
 
                 // The card will try to polling the status register until
                 // both descriptor and card are not in busy state
@@ -732,15 +725,15 @@ impl SdmmcHardware for SdmmcMesonHardware {
             }
 
             if (status & STATUS_EIO_ERR) != 0 {
-                debug_log!("SDMMC: CARD IO ERROR! Perform retuning\n");
+                info!("SDMMC: CARD IO ERROR! Perform retuning");
 
                 self.meson_wait_desc_stop()?;
                 // Notified the card to retune the card
                 return Err(SdmmcError::EIO);
             }
 
-            debug_log!(
-                "SDMMC: Unknown error, copy the prints from card init to end of the print and send it to me\n"
+            info!(
+                "SDMMC: Unknown error, Please copy the entire log from driver and send it to Cheng Li lichengchaoreng@gmail.com"
             );
 
             self.meson_wait_desc_stop()?;

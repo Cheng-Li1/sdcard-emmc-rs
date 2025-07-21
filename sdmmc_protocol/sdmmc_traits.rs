@@ -1,5 +1,5 @@
 use crate::{
-    debug_log,
+    dev_log,
     sdmmc::{
         HostInfo, MmcData, MmcIos, SdmmcCmd, SdmmcError,
         mmc_struct::{MmcBusWidth, MmcTiming},
@@ -189,7 +189,7 @@ pub trait SdmmcHardware {
             }
             break 'command_retry;
         }
-        debug_log!("A timeout request not reported by the host, the host might be unreliable\n");
+        dev_log!("A timeout request not reported by the host, the host might be unreliable\n");
         Err(SdmmcError::EUNDEFINED)
     }
 }

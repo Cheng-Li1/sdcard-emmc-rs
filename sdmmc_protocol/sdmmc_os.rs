@@ -86,7 +86,28 @@ pub fn __logging_helper(args: core::fmt::Arguments) {
 }
 
 #[macro_export]
-macro_rules! debug_log {
+macro_rules! print_info {
+    ($($arg:tt)*) => {
+        $crate::sdmmc_os::__logging_helper(format_args!($($arg)*));
+    }
+}
+
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {
+        $crate::print_info!("{}\n", format_args!($($arg)*));
+    }
+}
+
+#[cfg(not(feature = "dev-logs"))]
+#[macro_export]
+macro_rules! dev_log {
+    ($($arg:tt)*) => {}
+}
+
+#[cfg(feature = "dev-logs")]
+#[macro_export]
+macro_rules! dev_log {
     ($($arg:tt)*) => {
         $crate::sdmmc_os::__logging_helper(format_args!($($arg)*));
     }

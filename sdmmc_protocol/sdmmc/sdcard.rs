@@ -1,4 +1,4 @@
-use crate::{debug_log, sdmmc::mmc_struct::CardInfo};
+use crate::{dev_log, info, sdmmc::mmc_struct::CardInfo};
 
 use super::{
     SdmmcError,
@@ -21,9 +21,55 @@ pub struct Sdcard {
 
 impl Sdcard {
     pub fn print_info(&self) {
-        self.manufacture_info.print_cid_info();
+        const LABEL_WIDTH: usize = 20;
+        let capacity_bytes = self.card_specific_data.card_capacity;
 
-        debug_log!("Card capacity: {}", self.card_specific_data.card_capacity);
+        const KB: u64 = 1024;
+        const MB: u64 = 1024 * KB;
+        const GB: u64 = 1024 * MB;
+
+        info!("\n\n╔════════════════════════════════════════════════╗");
+        info!("║ SDCARD INFORMATION                           ║");
+        info!("╠════════════════════════════════════════════════╣");
+        info!(
+            "║ {:<width$}: {:<25} ║", // Pad the value side as well
+            "Manufacturer ID", self.manufacture_info.manufacturer_id, width = LABEL_WIDTH
+        );
+        info!(
+            "║ {:<width$}: {:<25} ║",
+            "OEM ID", self.manufacture_info.oem_id, width = LABEL_WIDTH
+        );
+        info!(
+            "║ {:<width$}: {:<25} ║",
+            "Product Name", core::str::from_utf8(&self.manufacture_info.product_name).unwrap_or("?????"), width = LABEL_WIDTH
+        );
+        info!(
+            "║ {:<width$}: {:<25} ║",
+            "Product Revision", self.manufacture_info.product_revision, width = LABEL_WIDTH
+        );
+        info!(
+            "║ {:<width$}: {:<25} ║",
+            "Serial Number", self.manufacture_info.serial_number, width = LABEL_WIDTH
+        );
+        info!(
+            "║ {:<width$}: {:<25} ║",
+            "Manufacturing Date", &format_args!("{}-{}", self.manufacture_info.manufacturing_date.0, self.manufacture_info.manufacturing_date.1),
+            width = LABEL_WIDTH
+        );
+
+        let (val, unit) = match capacity_bytes {
+            c if c >= GB => (c / GB, "GB"),
+            c if c >= MB => (c / MB, "MB"),
+            c if c >= KB => (c / KB, "KB"),
+            c => (c, "Bytes"),
+        };
+        info!(
+            "║ {:<width$}: {:<25} ║",
+            "Card Capacity", &format_args!("{} {} ({} bytes)", val, unit, capacity_bytes),
+            width = LABEL_WIDTH
+        );
+
+        info!("╚════════════════════════════════════════════════╝\n");
     }
 
     pub fn sdcard_info(&self) -> CardInfo {
@@ -101,20 +147,6 @@ impl Cid {
             serial_number,
             manufacturing_date: (year, month),
         }
-    }
-
-    pub fn print_cid_info(&self) {
-        debug_log!(
-            "Manufacturer ID: {}\nOEM ID: {}\nProduct Name: {}\nProduct Revision: {}\n\
-            Serial Number: {}\nManufacturing Date: {}-{}\n",
-            self.manufacturer_id,
-            self.oem_id,
-            core::str::from_utf8(&self.product_name).unwrap_or("?????"),
-            self.product_revision,
-            self.serial_number,
-            self.manufacturing_date.0,
-            self.manufacturing_date.1,
-        );
     }
 }
 
@@ -240,13 +272,13 @@ impl Scr {
             supported_cmd[i] = (command_support_bits & (1 << i)) != 0;
         }
 
-        debug_log!("Supported cmd: {:?}\n", supported_cmd);
+        dev_log!("Supported cmd: {:?}\n", supported_cmd);
 
         let mut data_stat_after_erase: bool = false;
         if scr_raw & (0b1 << 55) != 0 {
             data_stat_after_erase = true;
         }
-        debug_log!("Data status after erase: {:?}\n", data_stat_after_erase);
+        dev_log!("Data status after erase: {:?}\n", data_stat_after_erase);
 
         Ok(Scr {
             sd_spec: 0,

@@ -45,7 +45,7 @@ impl Sdcard {
         invalidate_cache_fn();
 
         // print out the content of the SCR register
-        crate::debug_log!("SCR register content: ");
+        crate::dev_log!("SCR register content: ");
         unsafe { crate::sdmmc::print_one_block(raw_memory as *const u8, 8) };
 
         // The sdcard register data is always in big endian format

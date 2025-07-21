@@ -37,7 +37,7 @@ use sdmmc_constant::{
 };
 
 use crate::{
-    debug_log,
+    dev_log,
     sdmmc::mmc_struct::CardInfo,
     sdmmc_os::{Sleep, VoltageOps},
     sdmmc_traits::SdmmcHardware,
@@ -316,7 +316,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             cmdarg: 0,
         };
 
-        debug_log!("Try to send go idle cmd\n");
+        dev_log!("Try to send go idle cmd\n");
 
         // Go idle command does not expect a response
         self.hardware.sdmmc_send_command(&cmd, None)?;
@@ -324,7 +324,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         // Linux use 1ms delay here, we use 2ms
         self.sleep.usleep(2_000);
 
-        debug_log!("Try to send check operating voltage cmd\n");
+        dev_log!("Try to send check operating voltage cmd\n");
 
         cmd = SdmmcCmd {
             cmdidx: SD_CMD_SEND_IF_COND,
@@ -348,7 +348,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         let mut retry: u16 = 1000;
 
         loop {
-            debug_log!("Sending SD_CMD_APP_SEND_OP_COND!\n");
+            dev_log!("Sending SD_CMD_APP_SEND_OP_COND!\n");
             // Prepare CMD55 (APP_CMD)
             cmd = SdmmcCmd {
                 cmdidx: MMC_CMD_APP_CMD,
@@ -396,7 +396,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             self.hardware
                 .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 0)?;
 
-            debug_log!("OCR: {:08x}\n", resp[0]);
+            dev_log!("OCR: {:08x}\n", resp[0]);
 
             // Check if card is ready (OCR_BUSY bit)
             if (resp[0] & OCR_BUSY) != 0 {
@@ -405,7 +405,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
 
             // retry handling
             if retry <= 0 {
-                debug_log!("SDMMC: SEND_OP_COND failed, card not supported!\n");
+                dev_log!("SDMMC: SEND_OP_COND failed, card not supported!\n");
                 return Err(SdmmcError::EUNSUPPORTEDCARD);
             }
             retry -= 1;
@@ -518,7 +518,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             // or the card is eMMC or legacy sdcard
             // For now, we only deal with the situation it is a sdcard
             // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
-            debug_log!(
+            dev_log!(
                 "Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!\n"
             );
             res
@@ -552,7 +552,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             | (resp[3] as u128);
 
         // Print out the CID number
-        debug_log!(
+        dev_log!(
             "CID: {:08x} {:08x} {:08x} {:08x}\n",
             resp[0],
             resp[1],
@@ -573,7 +573,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         let rca: u16 = (resp[0] >> 16) as u16; // Store RCA from response
 
         // Print out the RCA number we have got
-        debug_log!("RCA: {:04x}\n", rca);
+        dev_log!("RCA: {:04x}\n", rca);
 
         // Send CMD9 to get the CSD register
         cmd = SdmmcCmd {
@@ -585,7 +585,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         self.hardware
             .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 1)?;
 
-        debug_log!(
+        dev_log!(
             "CSD: {:08x} {:08x} {:08x} {:08x}\n",
             resp[0],
             resp[1],
@@ -713,7 +713,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             flags: MmcDataFlag::SdmmcDataRead,
             addr: destination,
         };
-        debug_log!("Gonna test read one block!\n");
+        dev_log!("Gonna test read one block!\n");
         let mut resp: [u32; 4] = [0; 4];
         let cmd_arg: u64 = start_idx;
         let cmd = SdmmcCmd {
@@ -725,14 +725,14 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             self.hardware
                 .sdmmc_do_request(&mut self.sleep, &cmd, Some(&data), &mut resp, 0)
         {
-            debug_log!("Error: {:?} in reading\n", error);
+            dev_log!("Error: {:?} in reading\n", error);
         }
         unsafe { print_one_block(destination as *mut u8, 512) };
     }
 
     /// Switch voltage function
     fn tune_sdcard_switch_uhs18v(&mut self) -> Result<(), SdmmcError> {
-        debug_log!("Entering tune sdcard signal voltage function!\n");
+        dev_log!("Entering tune sdcard signal voltage function!\n");
 
         if let Some(ref mut voltage_ops) = self.voltage_ops {
             let mut resp: [u32; 4] = [0; 4];
@@ -745,7 +745,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             self.hardware
                 .sdmmc_do_request(&mut self.sleep, &cmd, None, &mut resp, 0)?;
 
-            debug_log!("Switch voltage prepared!\n");
+            dev_log!("Switch voltage prepared!\n");
 
             self.mmc_ios.clock = self.hardware.sdmmc_config_timing(MmcTiming::ClockStop)?;
 
@@ -758,7 +758,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
                 signal = self.hardware.sdmmc_read_datalanes()?;
                 // TODO: figuring out the optimal delay
                 self.sleep.usleep(100);
-                debug_log!("data signal value: 0b{:b}\n", signal);
+                dev_log!("data signal value: 0b{:b}\n", signal);
                 if signal & 0xF == 0x0 {
                     break;
                 }
@@ -782,7 +782,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
                 signal = self.hardware.sdmmc_read_datalanes()?;
                 // TODO: figuring out the optimal delay
                 self.sleep.usleep(100);
-                debug_log!("data signal value: 0b{:b}\n", signal);
+                dev_log!("data signal value: 0b{:b}\n", signal);
                 if signal & 0xF == 0xF {
                     break;
                 }
@@ -990,14 +990,14 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
 
             self.hardware.sdmmc_config_bus_width(MmcBusWidth::Width4)?;
 
-            debug_log!("Tuning datalanes succeed!\n");
+            dev_log!("Tuning datalanes succeed!\n");
 
             // If any of the cmd above fail, the card should be completely reinit
             self.mmc_ios.bus_width = MmcBusWidth::Width4;
             // TODO: Change sdcard bus width here, or get rid of that field completely
         }
 
-        debug_log!("Checking supported speed classes\n");
+        dev_log!("Checking supported speed classes\n");
 
         if let Some(MmcDevice::Sdcard(ref mut sdcard)) = self.mmc_device {
             match self.mmc_ios.signal_voltage {
@@ -1041,7 +1041,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         let mut target_timing: MmcTiming;
         let sdcard_cap: SdcardCapability;
         if let Some(MmcDevice::Sdcard(ref sdcard)) = self.mmc_device {
-            debug_log!("Switch to higher speed class\n");
+            dev_log!("Switch to higher speed class\n");
             sdcard_cap = sdcard.card_cap.clone();
             target_timing = sdcard.card_state.timing;
             // This 'tune_speed thing is a feature called labeled block in Rust
@@ -1107,7 +1107,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             self.hardware
                 .sdmmc_execute_tuning(physical_memory_addr as *mut [u8; 64], &mut self.sleep)?;
 
-            debug_log!("Current frequency: {}Hz\n", self.mmc_ios.clock);
+            dev_log!("Current frequency: {}Hz\n", self.mmc_ios.clock);
         } else {
             return Err(SdmmcError::EUNDEFINED);
         }
@@ -1434,14 +1434,14 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
                     sdcard.print_info();
                 }
                 MmcDevice::EMmc(_emmc) => {
-                    debug_log!("eMMC card support is not available yet!\n");
+                    dev_log!("eMMC card support is not available yet!\n");
                 }
                 MmcDevice::Unknown => {
-                    debug_log!("Unknown card!\n");
+                    dev_log!("Unknown card!\n");
                 }
             }
         } else {
-            debug_log!("No available device! Try initialize the card first\n");
+            dev_log!("No available device! Try initialize the card first\n");
         }
     }
 
@@ -1543,10 +1543,10 @@ unsafe fn print_one_block(ptr: *const u8, num: usize) {
         for i in 0..num {
             let byte = *ptr.add(i);
             if i % 16 == 0 {
-                debug_log!("\n{:04x}: ", i);
+                dev_log!("\n{:04x}: ", i);
             }
-            debug_log!("{:02x} ", byte);
+            dev_log!("{:02x} ", byte);
         }
-        debug_log!("\n");
+        dev_log!("\n");
     }
 }

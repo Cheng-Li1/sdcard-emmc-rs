@@ -117,6 +117,9 @@ fn init() -> impl Handler {
         .setup_card()
         .unwrap_or_else(|error| panic!("SDMMC: Error at setup {:?}", error));
 
+    // Print the card info after the init process
+    sdmmc_host.print_card_info();
+
     let _ = sdmmc_host.config_interrupt(false, false);
 
     // Print out one block to check if read works
