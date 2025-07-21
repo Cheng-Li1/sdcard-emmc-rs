@@ -1,3 +1,10 @@
+pub mod mmc_struct;
+pub mod sd_ops;
+pub mod sdcard;
+pub mod sdmmc_capability;
+
+mod sdmmc_constant;
+
 use core::{
     future::Future,
     pin::Pin,
@@ -8,9 +15,9 @@ use core::{
 use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming};
 use sdcard::{Cid, Csd, Scr, Sdcard};
 use sdmmc_capability::{
-    SdcardCapability, SdmmcHostCapability, MMC_CAP_4_BIT_DATA, MMC_EMPTY_CAP, MMC_TIMING_LEGACY,
-    MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50, MMC_TIMING_UHS_SDR104, MMC_TIMING_UHS_SDR12,
-    MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50,
+    MMC_CAP_4_BIT_DATA, MMC_EMPTY_CAP, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50,
+    MMC_TIMING_UHS_SDR12, MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50, MMC_TIMING_UHS_SDR104,
+    SdcardCapability, SdmmcHostCapability,
 };
 use sdmmc_constant::{
     MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_ERASE, MMC_CMD_GO_IDLE_STATE,
@@ -20,26 +27,21 @@ use sdmmc_constant::{
     SD_CMD_APP_SET_BUS_WIDTH, SD_CMD_ERASE_WR_BLK_END, SD_CMD_ERASE_WR_BLK_START,
     SD_CMD_SEND_IF_COND, SD_CMD_SEND_RELATIVE_ADDR, SD_CMD_SWITCH_FUNC, SD_CMD_SWITCH_UHS18V,
     SD_ERASE_ARG, SD_SWITCH_FUNCTION_GROUP_ONE, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_SDHS,
-    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104,
-    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25,
-    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY,
+    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_DDR50, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR12,
+    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR50,
+    SD_SWITCH_FUNCTION_GROUP_ONE_CHECK_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_SET_LEGACY,
     SD_SWITCH_FUNCTION_GROUP_ONE_SET_SDHS, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_DDR50,
-    SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12,
-    SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50,
+    SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR12, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR25,
+    SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104,
     SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE,
 };
 
 use crate::{
     debug_log,
+    sdmmc::mmc_struct::CardInfo,
     sdmmc_os::{Sleep, VoltageOps},
     sdmmc_traits::SdmmcHardware,
 };
-
-pub mod mmc_struct;
-pub mod sd_ops;
-pub mod sdcard;
-pub mod sdmmc_capability;
-mod sdmmc_constant;
 
 pub struct SdmmcCmd {
     pub cmdidx: u32,
@@ -441,7 +443,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         Ok(())
     }
 
-    // Funtion that is not completed
+    // Function that is not completed
     pub fn setup_card(&mut self) -> Result<(), SdmmcError> {
         // Disable all irqs here
         self.hardware.sdmmc_config_interrupt(false, false)?;
@@ -516,7 +518,9 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             // or the card is eMMC or legacy sdcard
             // For now, we only deal with the situation it is a sdcard
             // TODO: Implement setup for eMMC and legacy sdcard(SDSC) here
-            debug_log!("Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!\n");
+            debug_log!(
+                "Driver right now only support SDHC/SDXC card, please check if you are running this driver on SDIO/SDSC/EMMC card!\n"
+            );
             res
         }
     }
@@ -697,13 +701,9 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
                     physical_memory_addr,
                 )
             }
-            MmcDevice::EMmc(emmc) => Err(SdmmcError::ENOTIMPLEMENTED),
+            MmcDevice::EMmc(_emmc) => Err(SdmmcError::ENOTIMPLEMENTED),
             MmcDevice::Unknown => Err(SdmmcError::ENOTIMPLEMENTED),
         }
-    }
-
-    pub fn get_host_info(&mut self) -> HostInfo {
-        self.host_info.clone()
     }
 
     pub fn test_read_one_block(&mut self, start_idx: u64, destination: u64) {
@@ -725,7 +725,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             self.hardware
                 .sdmmc_do_request(&mut self.sleep, &cmd, Some(&data), &mut resp, 0)
         {
-            debug_log!("Error in reading\n");
+            debug_log!("Error: {:?} in reading\n", error);
         }
         unsafe { print_one_block(destination as *mut u8, 512) };
     }
@@ -1422,7 +1422,50 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             }
         }
     }
+
+    pub fn get_host_info(&mut self) -> HostInfo {
+        self.host_info.clone()
+    }
+
+    pub fn print_card_info(&self) {
+        if let Some(ref device) = self.mmc_device {
+            match device {
+                MmcDevice::Sdcard(sdcard) => {
+                    sdcard.print_info();
+                }
+                MmcDevice::EMmc(_emmc) => {
+                    debug_log!("eMMC card support is not available yet!\n");
+                }
+                MmcDevice::Unknown => {
+                    debug_log!("Unknown card!\n");
+                }
+            }
+        } else {
+            debug_log!("No available device! Try initialize the card first\n");
+        }
+    }
+
+    pub fn card_info(&self) -> Result<CardInfo, SdmmcError> {
+        let res: Result<CardInfo, SdmmcError>;
+        if let Some(ref device) = self.mmc_device {
+            match device {
+                MmcDevice::Sdcard(sdcard) => {
+                    res = Ok(sdcard.sdcard_info());
+                }
+                MmcDevice::EMmc(_emmc) => {
+                    res = Err(SdmmcError::ENOTIMPLEMENTED);
+                }
+                MmcDevice::Unknown => {
+                    res = Err(SdmmcError::ENOTIMPLEMENTED);
+                }
+            }
+        } else {
+            res = Err(SdmmcError::ENOCARD);
+        }
+        res
+    }
 }
+
 enum CmdState {
     // Waiting for the response
     WaitingForResponse,

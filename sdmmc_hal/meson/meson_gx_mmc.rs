@@ -3,16 +3,16 @@ use core::ptr;
 use sdmmc_protocol::{
     debug_log,
     sdmmc::{
+        HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
+        SdmmcError,
         mmc_struct::{MmcBusWidth, MmcTiming},
         sdcard::Sdcard,
         sdmmc_capability::{
             MMC_CAP_4_BIT_DATA, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32,
             MMC_VDD_32_33, MMC_VDD_33_34,
         },
-        HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
-        SdmmcError,
     },
-    sdmmc_os::{process_wait_unreliable, Sleep},
+    sdmmc_os::{Sleep, process_wait_unreliable},
     sdmmc_traits::SdmmcHardware,
 };
 
@@ -176,7 +176,7 @@ impl MesonSdmmcRegisters {
     /// This function is only safe to use if the sdmmc_register_base is the correct memory addr
     /// of the sdmmc register base and accessible for the driver
     unsafe fn new(sdmmc_register_base: u64) -> &'static mut MesonSdmmcRegisters {
-        &mut *(sdmmc_register_base as *mut MesonSdmmcRegisters)
+        unsafe { &mut *(sdmmc_register_base as *mut MesonSdmmcRegisters) }
     }
 }
 
@@ -199,7 +199,8 @@ pub struct SdmmcMesonHardware {
 
 impl SdmmcMesonHardware {
     pub unsafe fn new(sdmmc_register_base: u64) -> Self {
-        let register = MesonSdmmcRegisters::new(sdmmc_register_base);
+        let register: &'static mut MesonSdmmcRegisters =
+            unsafe { MesonSdmmcRegisters::new(sdmmc_register_base) };
 
         // TODO: Call reset function here
         SdmmcMesonHardware {

@@ -31,7 +31,7 @@ pub enum MmcTiming {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct MmcState {
+pub struct MmcState {
     /// The timing specification that dictates how data is transferred between the host
     /// and the card.
     ///
@@ -41,7 +41,7 @@ pub(crate) struct MmcState {
     ///   - `Timing::Legacy`: Legacy slower transfer mode.
     ///   - `Timing::SdHs`: SD high-speed mode.
     ///   - `Timing::MmcHs200`: eMMC HS200 mode for high-speed data transfers.
-    pub(crate) timing: MmcTiming,
+    pub timing: MmcTiming,
 
     /// The width of the data bus used for communication between the host and the card.
     ///
@@ -52,10 +52,11 @@ pub(crate) struct MmcState {
     ///   - `BusWidth::Width1`: 1-bit data width (lowest speed, used during initialization).
     ///   - `BusWidth::Width4`: 4-bit data width (common for SD cards).
     ///   - `BusWidth::Width8`: 8-bit data width (mainly for eMMC).
-    pub(crate) bus_width: MmcBusWidth,
+    pub bus_width: MmcBusWidth,
 }
 
 /// Some of the MmcDevice is reserved for future use
+#[allow(dead_code)]
 pub(crate) enum MmcDevice {
     Sdcard(Sdcard),
     EMmc(EMmc),
@@ -64,6 +65,8 @@ pub(crate) enum MmcDevice {
 }
 
 /// Represents the different states of an SD or eMMC card.
+/// Not used yet
+#[allow(dead_code)]
 #[derive(Debug, PartialEq)]
 enum CardState {
     Idle,
@@ -86,4 +89,11 @@ pub enum BlockTransmissionMode {
     StopTransmission = 1,
     // Host automatically send stop command without the need to driver interference
     AutoStop = 2,
+}
+
+#[derive(Debug)]
+pub struct CardInfo {
+    pub card_id: u128,
+    pub card_capacity: u64,
+    pub card_state: MmcState,
 }

@@ -3,9 +3,9 @@ use core::sync::atomic::Ordering;
 use crate::{sdmmc_os::Sleep, sdmmc_traits::SdmmcHardware};
 
 use super::{
+    MMC_RSP_R1, MmcData, MmcDataFlag, SdmmcCmd, SdmmcError,
     sdcard::{Scr, Sdcard},
     sdmmc_constant::{MMC_CMD_APP_CMD, SD_CMD_APP_SEND_SCR, SD_CMD_SWITCH_FUNC},
-    MmcData, MmcDataFlag, SdmmcCmd, SdmmcError, MMC_RSP_R1,
 };
 
 impl Sdcard {

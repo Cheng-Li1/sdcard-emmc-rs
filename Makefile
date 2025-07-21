@@ -51,6 +51,15 @@ $(TARGET_ELF): $(BUILD_DIR)
 		--target support/targets/aarch64-sel4-microkit-minimal.json
 	@echo "Build complete: $(TARGET_ELF)"
 
+.PHONY: clippy
+clippy:
+	@SEL4_INCLUDE_DIRS=$(abspath $(sel4_include_dirs)) \
+	cargo clippy \
+		-Z build-std=core,alloc,compiler_builtins \
+		-Z build-std-features=compiler-builtins-mem \
+		--target-dir $(BUILD_DIR) \
+		--target support/targets/aarch64-sel4-microkit-minimal.json
+
 IMAGE_FILE := loader.img
 REPORT_FILE := report.txt
 

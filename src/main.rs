@@ -26,7 +26,7 @@ use sdmmc_protocol::{
     sdmmc_os::{Sleep, VoltageOps},
 };
 use sel4_microkit::{
-    Channel, ChannelSet, Handler, Infallible, debug_print, debug_println, protection_domain,
+    ChannelSet, Handler, Infallible, debug_print, debug_println, protection_domain,
 };
 
 use crate::sel4_microkit_os::{SerialOps, odroidc4::Odroidc4VoltageSwitch};
@@ -54,7 +54,7 @@ unsafe fn print_one_block(ptr: *const u8, num: usize) {
         // Iterate over the number of bytes and print each one in hexadecimal format
         for i in 0..num {
             let byte = *ptr.add(i);
-            if i % 16 == 0 {
+            if i.is_multiple_of(16) {
                 debug_print!("\n{:04x}: ", i);
             }
             debug_print!("{:02x} ", byte);
@@ -95,14 +95,12 @@ fn init() -> impl Handler {
     let meson_hal: SdmmcMesonHardware =
         unsafe { SdmmcMesonHardware::new(sdmmc_hal::meson_gx_mmc::SDIO_BASE) };
 
-    let unsafe_stolen_memory: *mut [u8; 64];
-    let physical_memory_addr: u64;
-
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
-    unsafe_stolen_memory = 0xf5500000 as *mut [u8; 64];
-    physical_memory_addr = 0xf5500000;
-    assert!(physical_memory_addr as usize % 8 == 0);
+    let unsafe_stolen_memory: *mut [u8; 64] = 0xf5500000 as *mut [u8; 64];
+    let physical_memory_addr: u64 = 0xf5500000;
+
+    assert!((physical_memory_addr as usize).is_multiple_of(8));
 
     // Handling result in two different ways, by matching and unwrap_or_else
     let res = SdmmcProtocol::new(
@@ -175,61 +173,59 @@ impl<T: SdmmcHardware + 'static, S: Sleep + 'static, V: VoltageOps + 'static> Ha
 
             'process_notification: {
                 // Polling if receive interrupt notification
-                if channel.index() == INTERRUPT.index() {
-                    if let Some(request) = &mut self.request {
-                        if let Some(future) = &mut self.future {
-                            let waker = create_dummy_waker();
-                            let mut cx = Context::from_waker(&waker);
-                            match future.as_mut().poll(&mut cx) {
-                                Poll::Ready((result, sdmmc)) => {
-                                    // debug_println!("SDMMC_DRIVER: Future completed with result");
-                                    self.future = None; // Reset the future once done
-                                    self.sdmmc = Some(sdmmc);
-                                    if result.is_err() {
-                                        debug_println!(
-                                            "SDMMC_DRIVER: DISK ERROR ENCOUNTERED, possibly retry!"
-                                        );
-                                        self.retry -= 1;
-                                    } else {
-                                        // Deduct finished count from count
-                                        request.success_count += request.count_to_do;
-                                        request.count -= request.count_to_do;
-                                    }
-                                    if request.count == 0 {
-                                        let resp_status = BlkStatus::BlkRespOk;
-                                        notify_virt = true;
-                                        unsafe {
-                                            blk_enqueue_resp_helper(
-                                                resp_status,
-                                                request.success_count / SDDF_TO_REAL_SECTOR,
-                                                request.id,
-                                            );
-                                        }
-                                        self.request = None;
-                                    } else if self.retry == 0 {
-                                        let resp_status = BlkStatus::BlkRespSeekError;
-                                        notify_virt = true;
-                                        unsafe {
-                                            blk_enqueue_resp_helper(
-                                                resp_status,
-                                                request.success_count / SDDF_TO_REAL_SECTOR,
-                                                request.id,
-                                            );
-                                        }
-                                        self.request = None;
-                                    }
+                if channel.index() == INTERRUPT.index()
+                    && let Some(request) = &mut self.request
+                {
+                    if let Some(future) = &mut self.future {
+                        let waker = create_dummy_waker();
+                        let mut cx = Context::from_waker(&waker);
+                        match future.as_mut().poll(&mut cx) {
+                            Poll::Ready((result, sdmmc)) => {
+                                // debug_println!("SDMMC_DRIVER: Future completed with result");
+                                self.future = None; // Reset the future once done
+                                self.sdmmc = Some(sdmmc);
+                                if result.is_err() {
+                                    debug_println!(
+                                        "SDMMC_DRIVER: DISK ERROR ENCOUNTERED, possibly retry!"
+                                    );
+                                    self.retry -= 1;
+                                } else {
+                                    // Deduct finished count from count
+                                    request.success_count += request.count_to_do;
+                                    request.count -= request.count_to_do;
                                 }
-                                Poll::Pending => {
-                                    // debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
-                                    // Since the future is not ready, no other request can be dequeued, exit the big loop
-                                    break 'process_notification;
+                                if request.count == 0 {
+                                    let resp_status = BlkStatus::BlkRespOk;
+                                    notify_virt = true;
+                                    unsafe {
+                                        blk_enqueue_resp_helper(
+                                            resp_status,
+                                            request.success_count / SDDF_TO_REAL_SECTOR,
+                                            request.id,
+                                        );
+                                    }
+                                    self.request = None;
+                                } else if self.retry == 0 {
+                                    let resp_status = BlkStatus::BlkRespSeekError;
+                                    notify_virt = true;
+                                    unsafe {
+                                        blk_enqueue_resp_helper(
+                                            resp_status,
+                                            request.success_count / SDDF_TO_REAL_SECTOR,
+                                            request.id,
+                                        );
+                                    }
+                                    self.request = None;
                                 }
                             }
-                        } else {
-                            panic!(
-                                "SDMMC: Receive a hardware interrupt despite not having a future!"
-                            );
+                            Poll::Pending => {
+                                // debug_println!("SDMMC_DRIVER: Future is not ready, polling again...");
+                                // Since the future is not ready, no other request can be dequeued, exit the big loop
+                                break 'process_notification;
+                            }
                         }
+                    } else {
+                        panic!("SDMMC: Receive a hardware interrupt despite not having a future!");
                     }
                 }
 
@@ -257,8 +253,8 @@ impl<T: SdmmcHardware + 'static, S: Sleep + 'static, V: VoltageOps + 'static> Ha
                         );
                     }
                     // TODO: Consider how to add integer overflow check here
-                    request.block_number = request.block_number * SDDF_TO_REAL_SECTOR;
-                    request.count = request.count * SDDF_TO_REAL_SECTOR;
+                    request.block_number *= SDDF_TO_REAL_SECTOR;
+                    request.count *= SDDF_TO_REAL_SECTOR;
                     // Print the retrieved values
                     /*
                     debug_println!("io_or_offset: 0x{:x}", request.io_or_offset);// Simple u64
@@ -290,73 +286,71 @@ impl<T: SdmmcHardware + 'static, S: Sleep + 'static, V: VoltageOps + 'static> Ha
                 }
 
                 // If future is empty
-                if let Some(request) = &mut self.request {
-                    if let None = self.future {
-                        match request.request_code {
-                            BlkOp::BlkReqRead => {
-                                // TODO: The MAX_BLOCK_PER_TRANSFER is got by hackily get the defines in hardware layer which is wrong, check that to get properly from protocol layer
-                                request.count_to_do = core::cmp::min(
-                                    request.count as u32,
-                                    sdmmc_hal::meson_gx_mmc::MAX_BLOCK_PER_TRANSFER,
-                                );
-                                if let Some(sdmmc) = self.sdmmc.take() {
-                                    self.future = Some(Box::pin(sdmmc.read_block(
-                                        request.count_to_do as u32,
-                                        request.block_number as u64 + request.success_count as u64,
-                                        request.io_or_offset
-                                            + request.success_count as u64
-                                                * SDCARD_SECTOR_SIZE as u64,
-                                    )));
-                                } else {
-                                    panic!(
-                                        "SDMMC_DRIVER: The sdmmc should be here since the future should be empty!!!"
-                                    )
-                                }
-                            }
-                            BlkOp::BlkReqWrite => {
-                                // TODO: The MAX_BLOCK_PER_TRANSFER is got by hackily get the defines in hardware layer which is wrong, check that to get properly from protocol layer
-                                request.count_to_do = core::cmp::min(
-                                    request.count as u32,
-                                    sdmmc_hal::meson_gx_mmc::MAX_BLOCK_PER_TRANSFER,
-                                );
-                                if let Some(sdmmc) = self.sdmmc.take() {
-                                    self.future = Some(Box::pin(sdmmc.write_block(
-                                        request.count_to_do as u32,
-                                        request.block_number as u64 + request.success_count as u64,
-                                        request.io_or_offset
-                                            + request.success_count as u64
-                                                * SDCARD_SECTOR_SIZE as u64,
-                                    )));
-                                } else {
-                                    panic!(
-                                        "SDMMC_DRIVER: The sdmmc should be here and the future should be empty!!!"
-                                    )
-                                }
-                            }
-                            _ => {
-                                panic!("SDMMC_DRIVER: You should not reach here!")
+                if let Some(request) = &mut self.request
+                    && let None = self.future
+                {
+                    match request.request_code {
+                        BlkOp::BlkReqRead => {
+                            // TODO: The MAX_BLOCK_PER_TRANSFER is got by hackily get the defines in hardware layer which is wrong, check that to get properly from protocol layer
+                            request.count_to_do = core::cmp::min(
+                                request.count,
+                                sdmmc_hal::meson_gx_mmc::MAX_BLOCK_PER_TRANSFER,
+                            );
+                            if let Some(sdmmc) = self.sdmmc.take() {
+                                self.future = Some(Box::pin(sdmmc.read_block(
+                                    request.count_to_do,
+                                    request.block_number as u64 + request.success_count as u64,
+                                    request.io_or_offset
+                                        + request.success_count as u64 * SDCARD_SECTOR_SIZE as u64,
+                                )));
+                            } else {
+                                panic!(
+                                    "SDMMC_DRIVER: The sdmmc should be here since the future should be empty!!!"
+                                )
                             }
                         }
-                        let waker = create_dummy_waker();
-                        let mut cx = Context::from_waker(&waker);
-                        // Poll the future once to make it start working!
-                        if let Some(ref mut future) = self.future {
-                            match future.as_mut().poll(&mut cx) {
-                                Poll::Ready(_) => {
-                                    panic!(
-                                        "SDMMC: The newly created future returned immediately! 
+                        BlkOp::BlkReqWrite => {
+                            // TODO: The MAX_BLOCK_PER_TRANSFER is got by hackily get the defines in hardware layer which is wrong, check that to get properly from protocol layer
+                            request.count_to_do = core::cmp::min(
+                                request.count,
+                                sdmmc_hal::meson_gx_mmc::MAX_BLOCK_PER_TRANSFER,
+                            );
+                            if let Some(sdmmc) = self.sdmmc.take() {
+                                self.future = Some(Box::pin(sdmmc.write_block(
+                                    request.count_to_do,
+                                    request.block_number as u64 + request.success_count as u64,
+                                    request.io_or_offset
+                                        + request.success_count as u64 * SDCARD_SECTOR_SIZE as u64,
+                                )));
+                            } else {
+                                panic!(
+                                    "SDMMC_DRIVER: The sdmmc should be here and the future should be empty!!!"
+                                )
+                            }
+                        }
+                        _ => {
+                            panic!("SDMMC_DRIVER: You should not reach here!")
+                        }
+                    }
+                    let waker = create_dummy_waker();
+                    let mut cx = Context::from_waker(&waker);
+                    // Poll the future once to make it start working!
+                    if let Some(ref mut future) = self.future {
+                        match future.as_mut().poll(&mut cx) {
+                            Poll::Ready(_) => {
+                                panic!(
+                                    "SDMMC: The newly created future returned immediately! 
                                         Most likely the future contain an invalid request! 
                                         Double check request sanitize process!"
-                                    )
-                                }
-                                Poll::Pending => break 'process_notification,
+                                )
                             }
+                            Poll::Pending => break 'process_notification,
                         }
                     }
                 }
             }
 
-            if notify_virt == true {
+            if notify_virt {
                 // debug_println!("SDMMC_DRIVER: Notify the BLK_VIRTUALIZER!");
                 BLK_VIRTUALIZER.notify();
             }

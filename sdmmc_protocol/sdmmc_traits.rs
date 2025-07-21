@@ -1,8 +1,8 @@
 use crate::{
     debug_log,
     sdmmc::{
-        mmc_struct::{MmcBusWidth, MmcTiming},
         HostInfo, MmcData, MmcIos, SdmmcCmd, SdmmcError,
+        mmc_struct::{MmcBusWidth, MmcTiming},
     },
     sdmmc_os::Sleep,
 };
