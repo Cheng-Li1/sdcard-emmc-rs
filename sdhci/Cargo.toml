@@ -1,0 +1,15 @@
+[package]
+name = "sdhci"
+version = "0.1.0"
+edition = "2024"
+authors = ["Cheng Li 李澄 <lichengchaoreng@gmail.com>"]
+
+[lib]
+name = "sdhci"
+path = "lib.rs"
+
+[dependencies]
+sdmmc_protocol = { path = "../sdmmc_protocol" }
+tock-registers = "0.10.0"
+
+[features]
