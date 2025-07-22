@@ -8,8 +8,12 @@
 use sdmmc_protocol::sdmmc::mmc_struct::{MmcBusWidth, MmcTiming};
 use sdmmc_protocol::sdmmc::{HostInfo, MmcData, MmcIos, SdmmcCmd, SdmmcError};
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
+use tock_registers::interfaces::Writeable;
 use tock_registers::register_bitfields;
 use tock_registers::registers::{ReadOnly, ReadWrite, WriteOnly};
+
+const IRQ_ENABLE_MASK: u16 = 0xFFFF;
+const ERR_ENABLE_MASK: u16 = 0xFFFF;
 
 //--------------------------------------------------------------------------------------------------
 // Bitfield Definitions (These are unchanged from the previous method)
@@ -73,7 +77,7 @@ register_bitfields![u8,
 
 tock_registers::register_structs! {
     /// SD Host Controller Register Map
-    pub SdhciHost {
+    pub SdhciRegister {
         (0x000 => sdma_system_address: ReadWrite<u32>),
         (0x004 => block_size: ReadWrite<u16>),
         (0x006 => block_count: ReadWrite<u16>),
@@ -142,6 +146,26 @@ tock_registers::register_structs! {
     }
 }
 
+impl SdhciRegister {
+    unsafe fn new(sdmmc_register_base: u64) -> &'static mut SdhciRegister {
+        unsafe { &mut *(sdmmc_register_base as *mut SdhciRegister) }
+    }
+}
+
+struct SdhciHost {
+    register: &'static mut SdhciRegister,
+}
+
+impl SdhciHost {
+    pub unsafe fn new(sdmmc_register_base: u64) -> Self {
+        let register: &'static mut SdhciRegister =
+            unsafe { SdhciRegister::new(sdmmc_register_base) };
+
+        // TODO: Call reset function here
+        SdhciHost { register }
+    }
+}
+
 /// Helper methods for registers with special handling.
 impl SdmmcHardware for SdhciHost {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
@@ -179,15 +203,25 @@ impl SdmmcHardware for SdhciHost {
     fn sdmmc_config_interrupt(
         &mut self,
         enable_irq: bool,
-        enable_sdio_irq: bool,
+        _enable_sdio_irq: bool,
     ) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        if enable_irq {
+            self.register.normal_interrupt_signal_enable.set(IRQ_ENABLE_MASK);
+            self.register.error_interrupt_signal_enable.set(ERR_ENABLE_MASK);
+        }
+        else {
+            self.register.normal_interrupt_signal_enable.set(0);
+            self.register.error_interrupt_signal_enable.set(0);
+        }
+
+        return Ok(());
     }
 
+    // Should I remove this method and auto ack the irq in the receive response fcuntion?
     fn sdmmc_ack_interrupt(&mut self) -> Result<(), SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
-    
+
     fn sdmmc_execute_tuning(
         &mut self,
         memory: *mut [u8; 64],
@@ -195,7 +229,7 @@ impl SdmmcHardware for SdhciHost {
     ) -> Result<(), SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
-    
+
     fn sdmmc_host_reset(&mut self) -> Result<sdmmc_protocol::sdmmc::MmcIos, SdmmcError> {
         return Err(SdmmcError::ENOTIMPLEMENTED);
     }
