@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <system>
-    <memory_region name="blk_driver_config" size="0x1000" page_size="0x1000" />
-    <memory_region name="blk_driver_request" size="0x200_000" page_size="0x200_000"/>
-    <memory_region name="blk_driver_response" size="0x200_000" page_size="0x200_000"/>
-
     <!-- Device memory region -->
     <memory_region name="gpio" size="0x1000" phys_addr="0xff800000"/>
     <memory_region name="sdmmc" size="0x1000" phys_addr="0xffe05000" />
@@ -17,8 +13,5 @@
         <map mr="gpio" vaddr="0xff800000" perms="rw" cached="false" />
         
         <map mr="data_region" vaddr="0xf5500000" perms="rw" cached="false" />
-        <map mr="blk_driver_config" vaddr="0x40000000" perms="rw" cached="false" setvar_vaddr="blk_config"     />
-        <map mr="blk_driver_request"    vaddr="0x40200000" perms="rw" cached="false" setvar_vaddr="blk_req_queue"  />
-        <map mr="blk_driver_response"   vaddr="0x40400000" perms="rw" cached="false" setvar_vaddr="blk_resp_queue" />
     </protection_domain>
 </system>
