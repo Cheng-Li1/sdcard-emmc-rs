@@ -1,5 +1,4 @@
-use sddf_timer::timer::Timer;
-use sdmmc_protocol::sdmmc_os::{Log, Sleep};
+use sdmmc_protocol::sdmmc_os::{Log, Sleep, process_wait_unreliable};
 use sel4_panicking_env::__debug_print_macro_helper;
 
 pub mod odroidc4;
@@ -7,19 +6,18 @@ pub mod odroidc4;
 const NS_IN_US: u64 = 1000;
 
 /// Wrapper to work around Rust's orphan rule
-pub struct TimerOps {
-    timer: Timer,
-}
+pub struct TimerOps {}
 
 impl TimerOps {
-    pub fn new(timer: Timer) -> Self {
-        TimerOps { timer }
+    pub const fn new() -> Self {
+        TimerOps {}
     }
 }
 
 impl Sleep for TimerOps {
     fn usleep(&mut self, time_us: u32) {
-        self.timer.set_timeout(time_us as u64 * NS_IN_US);
+        process_wait_unreliable(time_us as u64 * NS_IN_US);
+        // self.timer.set_timeout(time_us as u64 * NS_IN_US);
     }
 }
 

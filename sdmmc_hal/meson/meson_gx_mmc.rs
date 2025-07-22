@@ -1,12 +1,19 @@
 use core::ptr;
 
 use sdmmc_protocol::{
-    dev_log, info, sdmmc::{
-        mmc_struct::{MmcBusWidth, MmcTiming}, sdcard::Sdcard, sdmmc_capability::{
+    dev_log, info,
+    sdmmc::{
+        HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
+        SdmmcError,
+        mmc_struct::{MmcBusWidth, MmcTiming},
+        sdcard::Sdcard,
+        sdmmc_capability::{
             MMC_CAP_4_BIT_DATA, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32,
             MMC_VDD_32_33, MMC_VDD_33_34,
-        }, HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError
-    }, sdmmc_os::{process_wait_unreliable, Sleep}, sdmmc_traits::SdmmcHardware
+        },
+    },
+    sdmmc_os::{Sleep, process_wait_unreliable},
+    sdmmc_traits::SdmmcHardware,
 };
 
 pub const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS

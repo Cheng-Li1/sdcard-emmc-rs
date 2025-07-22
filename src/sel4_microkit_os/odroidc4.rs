@@ -20,6 +20,12 @@ const AO_RTI_PULL_UP_EN_REG: u64 = 0xff800030;
 const GPIO_AO_3: u32 = 1 << 3;
 const GPIO_AO_6: u32 = 1 << 6;
 
+impl Odroidc4VoltageSwitch {
+    pub const fn new() -> Self {
+        Odroidc4VoltageSwitch {}
+    }
+}
+
 impl VoltageOps for Odroidc4VoltageSwitch {
     fn card_voltage_switch(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
         match voltage {
