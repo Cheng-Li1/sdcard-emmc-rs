@@ -5,7 +5,7 @@
 
 #![allow(dead_code)] // Allow unused fields, as a driver may not use all registers.
 
-use sdmmc_protocol::info;
+use sdmmc_protocol::{dev_log, info};
 use sdmmc_protocol::sdmmc::mmc_struct::{MmcBusWidth, MmcTiming};
 use sdmmc_protocol::sdmmc::sdmmc_capability::{MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34};
 use sdmmc_protocol::sdmmc::{HostInfo, MmcData, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError};
@@ -43,6 +43,7 @@ const CLK_400_KHZ: u32 = 400000;
 
 const PSR_CARD_INSRT_MASK: u32 = 0x00010000;
 const PSR_INIHIBIT_CMD_MASK: u32 = 0x00000001;
+const PSR_INHIBIT_DAT_MASK: u32 = 0x00000002;
 
 const NORM_INTR_ALL_MASK: u16 = 0x0000FFFF;
 const ERROR_INTR_ALL_MASK: u16 = 0x0000F3FF;
@@ -58,6 +59,13 @@ const HC_DMA_ADMA2_64_MASK: u8 = 0x00000018;
 const INTR_CARD_MASK: u16 = 0x00000100;
 
 const BLK_SIZE_512_MASK: u16 = 0x200;
+
+const TM_DMA_EN_MASK: u16 = 0x00000001;
+const TM_BLK_CNT_EN_MASK: u16 = 0x00000002;
+const TM_DAT_DIR_SEL_MASK: u16 = 0x00000010;
+
+const INTR_ERR_MASK: u16 = 0x00008000;
+const INTR_CC_MASK: u16 = 0x00000001;
 
 //--------------------------------------------------------------------------------------------------
 // Bitfield Definitions (These are unchanged from the previous method)
@@ -363,6 +371,7 @@ impl SdhciHost {
         }
 
         let clock = self.calc_clock(clk_freq);
+        dev_log!("clock frequency: {}, clock divisor: {}, freq/divisor: {}\n", clk_freq, clock, clk_freq / clock);
 
         self.enable_clock(clock as u16)
     }
@@ -409,6 +418,28 @@ impl SdhciHost {
         self.register.normal_interrupt_status.set(NORM_INTR_ALL_MASK);
         self.register.error_interrupt_status.set(ERROR_INTR_ALL_MASK);
 
+        dev_log!("[SET] block_count: 0x{:x}, timeout_control: 0x{:x}, argument: 0x{:x}\n", self.register.block_count.get(), self.register.timeout_control.get(), self.register.argument.get());
+
+        Ok(())
+    }
+
+    fn send_cmd(&self, cmdidx: u32, _resp_type: u32) -> Result<(), SdmmcError> {
+        if cmdidx != 21 && cmdidx != 19 {
+            let _present_state = self.register.present_state.get();
+            dev_log!("[GET] present_state: 0x{:x}\n", _present_state);
+            // todo: fix for data inhibit check
+            // if present_state & PSR_INHIBIT_DAT_MASK != 0 
+        }
+        let command: u16;
+        if cmdidx == 0 {
+            command = ((cmdidx as u16) << 8);
+        } else {
+            command = ((cmdidx as u16) << 8) | 0b11010;
+        }
+        self.register.command.set(command);
+        self.register.transfer_mode.set(TM_DMA_EN_MASK | TM_BLK_CNT_EN_MASK | TM_DAT_DIR_SEL_MASK);
+
+        dev_log!("[SET] command: 0x{:x}, transfer_mode: 0x{:x}\n", command, self.register.transfer_mode.get());
         Ok(())
     }
 }
@@ -466,11 +497,14 @@ impl SdmmcHardware for SdhciHost {
             todo!()
         }
 
+        // When cmd is send status or stop transmission, the sdcard can execute those when trasferring data
+        // if cmd.cmdidx != 13 && self.register.present_state.get() {
+        //     todo!("wait for data transform")
+        // }
+
         self.setup_cmd(cmd.cmdarg, 0)?;
 
-        todo!();
-
-        Ok(())
+        self.send_cmd(cmd.cmdidx, cmd.resp_type)
     }
 
     fn sdmmc_receive_response(
@@ -478,7 +512,41 @@ impl SdmmcHardware for SdhciHost {
         cmd: &SdmmcCmd,
         response: &mut [u32; 4],
     ) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        // command complete/error
+        // present_status data lane in use
+        
+        let status = self.register.normal_interrupt_status.get();
+        if (status & INTR_ERR_MASK) == INTR_ERR_MASK {
+            todo!();
+            return Err(SdmmcError::EUNKNOWN);
+        }
+
+        dev_log!("status: {}\n", status);
+
+        if (status & INTR_CC_MASK) != INTR_CC_MASK {
+            return Err(SdmmcError::EBUSY);
+        }
+
+        if cmd.cmdidx == 19 || cmd.cmdidx == 21 {
+            todo!()
+        }
+
+        /* Write to clear bit */
+        self.register.normal_interrupt_status.set(INTR_CC_MASK);
+
+        let [rsp0, rsp1, rsp2, rsp3] = response;
+        if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_136 != 0 {
+            *rsp0 = self.register.response.get(3).unwrap().get();
+            *rsp1 = self.register.response.get(2).unwrap().get();
+            *rsp2 = self.register.response.get(1).unwrap().get();
+            *rsp3 = self.register.response.get(0).unwrap().get();
+            dev_log!("response: {}, {}, {}, {}", *rsp0, *rsp1, *rsp2, *rsp3);
+        } else {
+            *rsp0 = self.register.response.get(0).unwrap().get();
+            dev_log!("response: 0x{:x}\n", *rsp0);
+        }
+
+        Ok(())
     }
 
     fn sdmmc_config_interrupt(
@@ -500,7 +568,7 @@ impl SdmmcHardware for SdhciHost {
 
     // Should I remove this method and auto ack the irq in the receive response fcuntion?
     fn sdmmc_ack_interrupt(&mut self) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Ok(())
     }
 
     fn sdmmc_execute_tuning(

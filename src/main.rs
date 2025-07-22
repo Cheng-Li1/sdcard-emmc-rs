@@ -59,7 +59,7 @@ fn init() -> impl Handler {
     assert!((physical_memory_addr as usize).is_multiple_of(8));
 
     // Handling result in two different ways, by matching and unwrap_or_else
-    let res = SdmmcProtocol::new(hal, TIMER, Some(VOLTAGE));
+    let res = SdmmcProtocol::new(hal, TIMER, None::<Odroidc4VoltageSwitch>);
     let mut sdmmc_host = match res {
         Ok(host) => host,
         Err(err) => panic!("SDMMC: Error at init {:?}", err),
@@ -77,6 +77,7 @@ fn init() -> impl Handler {
     // Print out one block to check if read works
     // sdmmc_host.test_read_one_block(0, 0xf5500000);
 
+    /* 
     unsafe {
         sdmmc_host
             .tune_performance(
@@ -93,6 +94,7 @@ fn init() -> impl Handler {
 
     // Should always succeed, at least for odroid C4
     sdmmc_host.config_interrupt(true, false).unwrap();
+    */
 
     HandlerImpl {
         sdmmc: Some(sdmmc_host),
