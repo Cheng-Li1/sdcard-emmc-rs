@@ -102,7 +102,7 @@ macro_rules! info {
 #[cfg(not(feature = "dev-logs"))]
 #[macro_export]
 macro_rules! dev_log {
-    ($($arg:tt)*) => {}
+    ($($arg:tt)*) => {};
 }
 
 #[cfg(feature = "dev-logs")]

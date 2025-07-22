@@ -3,7 +3,6 @@
 
 extern crate alloc;
 
-mod sddf_blk;
 mod sel4_microkit_os;
 
 use sdmmc_hal::meson_gx_mmc::SdmmcMesonHardware;

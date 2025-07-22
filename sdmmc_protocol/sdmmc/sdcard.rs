@@ -33,27 +33,42 @@ impl Sdcard {
         info!("╠════════════════════════════════════════════════╣");
         info!(
             "║ {:<width$}: {:<25} ║", // Pad the value side as well
-            "Manufacturer ID", self.manufacture_info.manufacturer_id, width = LABEL_WIDTH
+            "Manufacturer ID",
+            self.manufacture_info.manufacturer_id,
+            width = LABEL_WIDTH
         );
         info!(
             "║ {:<width$}: {:<25} ║",
-            "OEM ID", self.manufacture_info.oem_id, width = LABEL_WIDTH
+            "OEM ID",
+            self.manufacture_info.oem_id,
+            width = LABEL_WIDTH
         );
         info!(
             "║ {:<width$}: {:<25} ║",
-            "Product Name", core::str::from_utf8(&self.manufacture_info.product_name).unwrap_or("?????"), width = LABEL_WIDTH
+            "Product Name",
+            core::str::from_utf8(&self.manufacture_info.product_name).unwrap_or("?????"),
+            width = LABEL_WIDTH
         );
         info!(
             "║ {:<width$}: {:<25} ║",
-            "Product Revision", self.manufacture_info.product_revision, width = LABEL_WIDTH
+            "Product Revision",
+            self.manufacture_info.product_revision,
+            width = LABEL_WIDTH
         );
         info!(
             "║ {:<width$}: {:<25} ║",
-            "Serial Number", self.manufacture_info.serial_number, width = LABEL_WIDTH
+            "Serial Number",
+            self.manufacture_info.serial_number,
+            width = LABEL_WIDTH
         );
         info!(
             "║ {:<width$}: {:<25} ║",
-            "Manufacturing Date", &format_args!("{}-{}", self.manufacture_info.manufacturing_date.0, self.manufacture_info.manufacturing_date.1),
+            "Manufacturing Date",
+            &format_args!(
+                "{}-{}",
+                self.manufacture_info.manufacturing_date.0,
+                self.manufacture_info.manufacturing_date.1
+            ),
             width = LABEL_WIDTH
         );
 
@@ -65,7 +80,8 @@ impl Sdcard {
         };
         info!(
             "║ {:<width$}: {:<25} ║",
-            "Card Capacity", &format_args!("{} {} ({} bytes)", val, unit, capacity_bytes),
+            "Card Capacity",
+            &format_args!("{} {} ({} bytes)", val, unit, capacity_bytes),
             width = LABEL_WIDTH
         );
 
