@@ -77,12 +77,6 @@ const CMD_CFG_TIMEOUT_4S: u32 = 12 << 12;
 const CMD_CFG_OWNER: u32 = 1 << 31;
 const CMD_CFG_END_OF_CHAIN: u32 = 1 << 11;
 
-// MMC_RSP constants
-const MMC_RSP_PRESENT: u32 = 1 << 0;
-const MMC_RSP_136: u32 = 1 << 1;
-const MMC_RSP_CRC: u32 = 1 << 2;
-const MMC_RSP_BUSY: u32 = 1 << 3;
-
 // STATUS register masks and flags
 const STATUS_MASK: u32 = 0xFFFF; // GENMASK(15, 0)
 const STATUS_ERR_MASK: u32 = 0x1FFF; // GENMASK(12, 0)
@@ -275,19 +269,19 @@ impl SdmmcMesonHardware {
 
         meson_mmc_cmd |= (cmd.cmdidx & 0x3F) << CMD_CFG_CMD_INDEX_SHIFT;
 
-        if cmd.resp_type & MMC_RSP_PRESENT != 0 {
-            if cmd.resp_type & MMC_RSP_136 != 0 {
+        if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_PRESENT != 0 {
+            if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_136 != 0 {
                 meson_mmc_cmd |= CMD_CFG_RESP_128;
             }
 
             // If the hardware does not have busy detection, polling for card datalines to be high is needed
             // as the card will signal "busy" (by pulling the DAT line low)
             // Odroid C4 have feature to wait until hardware exit busy state so we do not need to worry about it
-            if cmd.resp_type & MMC_RSP_BUSY != 0 {
+            if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_BUSY != 0 {
                 meson_mmc_cmd |= CMD_CFG_R1B;
             }
 
-            if cmd.resp_type & MMC_RSP_CRC == 0 {
+            if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_CRC == 0 {
                 meson_mmc_cmd |= CMD_CFG_RESP_NOCRC;
             }
         } else {
@@ -326,7 +320,7 @@ impl SdmmcMesonHardware {
         let [rsp0, rsp1, rsp2, rsp3] = response;
 
         // Assign values by reading the respective registers
-        if cmd.resp_type & MMC_RSP_136 != 0 {
+        if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_136 != 0 {
             unsafe {
                 // Yes, this is in a reverse order as rsp0 and self.cmd_rsp3 is the least significant
                 // Check uboot read response code for more details
@@ -335,7 +329,7 @@ impl SdmmcMesonHardware {
                 *rsp2 = ptr::read_volatile(&self.register.cmd_rsp1);
                 *rsp3 = ptr::read_volatile(&self.register.cmd_rsp);
             }
-        } else if cmd.resp_type & MMC_RSP_PRESENT != 0 {
+        } else if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_PRESENT != 0 {
             unsafe {
                 *rsp0 = ptr::read_volatile(&self.register.cmd_rsp);
             }

@@ -83,11 +83,11 @@ pub enum SdmmcError {
 }
 
 // Define the MMC response flags
-const MMC_RSP_PRESENT: u32 = 1 << 0;
-const MMC_RSP_136: u32 = 1 << 1; // 136-bit response
-const MMC_RSP_CRC: u32 = 1 << 2; // Expect valid CRC
-const MMC_RSP_BUSY: u32 = 1 << 3; // Card may send busy
-const MMC_RSP_OPCODE: u32 = 1 << 4; // Response contains opcode
+pub const MMC_RSP_PRESENT: u32 = 1 << 0;
+pub const MMC_RSP_136: u32 = 1 << 1; // 136-bit response
+pub const MMC_RSP_CRC: u32 = 1 << 2; // Expect valid CRC
+pub const MMC_RSP_BUSY: u32 = 1 << 3; // Card may send busy
+pub const MMC_RSP_OPCODE: u32 = 1 << 4; // Response contains opcode
 
 // How many times should we try to init the card
 const CARD_INIT_RETRY: u16 = 2;
