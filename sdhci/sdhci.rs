@@ -8,7 +8,7 @@
 use sdmmc_protocol::{dev_log, info};
 use sdmmc_protocol::sdmmc::mmc_struct::{MmcBusWidth, MmcTiming};
 use sdmmc_protocol::sdmmc::sdmmc_capability::{MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34};
-use sdmmc_protocol::sdmmc::{HostInfo, MmcData, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError};
+use sdmmc_protocol::sdmmc::{HostInfo, MmcData, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError, MMC_RSP_136, MMC_RSP_BUSY, MMC_RSP_CRC, MMC_RSP_OPCODE, MMC_RSP_PRESENT};
 use sdmmc_protocol::sdmmc_os::process_wait_unreliable;
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use tock_registers::interfaces::{Readable, Writeable};
@@ -423,18 +423,28 @@ impl SdhciHost {
         Ok(())
     }
 
-    fn send_cmd(&self, cmdidx: u32, _resp_type: u32) -> Result<(), SdmmcError> {
+    fn send_cmd(&self, cmdidx: u32, resp_type: u32) -> Result<(), SdmmcError> {
         if cmdidx != 21 && cmdidx != 19 {
             let _present_state = self.register.present_state.get();
             dev_log!("[GET] present_state: 0x{:x}\n", _present_state);
             // todo: fix for data inhibit check
             // if present_state & PSR_INHIBIT_DAT_MASK != 0 
         }
-        let command: u16;
-        if cmdidx == 0 {
-            command = ((cmdidx as u16) << 8);
-        } else {
-            command = ((cmdidx as u16) << 8) | 0b11010;
+        let mut command: u16 = (cmdidx as u16) << 8;
+        if (resp_type & MMC_RSP_PRESENT) != 0 {
+            if (resp_type & MMC_RSP_136) != 0 {
+                command |= 0b01;
+            } else if (resp_type & MMC_RSP_BUSY) != 0 {
+                command |= 0b11;
+            } else {
+                command |= 0b10;
+            }
+        }
+        if (resp_type & MMC_RSP_CRC) != 0 {
+            command |= 0b1000;
+        }
+        if (resp_type & MMC_RSP_OPCODE) != 0 {
+            command |= 0b10000;
         }
         self.register.command.set(command);
         self.register.transfer_mode.set(TM_DMA_EN_MASK | TM_BLK_CNT_EN_MASK | TM_DAT_DIR_SEL_MASK);
