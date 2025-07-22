@@ -5,8 +5,7 @@ extern crate alloc;
 
 mod sel4_microkit_os;
 
-use sdmmc_hal::meson_gx_mmc::SdmmcMesonHardware;
-
+use sdhci::sdhci::SdhciHost;
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sdmmc_protocol::{
     sdmmc::SdmmcProtocol,
@@ -49,8 +48,8 @@ fn init() -> impl Handler {
         sdmmc_protocol::sdmmc_os::set_logger(&SERIAL).unwrap();
     }
 
-    let meson_hal: SdmmcMesonHardware =
-        unsafe { SdmmcMesonHardware::new(sdmmc_hal::meson_gx_mmc::SDIO_BASE) };
+    let hal: SdhciHost =
+        unsafe { SdhciHost::new(0xff170000) };
 
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
@@ -60,7 +59,7 @@ fn init() -> impl Handler {
     assert!((physical_memory_addr as usize).is_multiple_of(8));
 
     // Handling result in two different ways, by matching and unwrap_or_else
-    let res = SdmmcProtocol::new(meson_hal, TIMER, Some(VOLTAGE));
+    let res = SdmmcProtocol::new(hal, TIMER, Some(VOLTAGE));
     let mut sdmmc_host = match res {
         Ok(host) => host,
         Err(err) => panic!("SDMMC: Error at init {:?}", err),

@@ -5,15 +5,59 @@
 
 #![allow(dead_code)] // Allow unused fields, as a driver may not use all registers.
 
+use sdmmc_protocol::info;
 use sdmmc_protocol::sdmmc::mmc_struct::{MmcBusWidth, MmcTiming};
-use sdmmc_protocol::sdmmc::{HostInfo, MmcData, MmcIos, SdmmcCmd, SdmmcError};
+use sdmmc_protocol::sdmmc::sdmmc_capability::{MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34};
+use sdmmc_protocol::sdmmc::{HostInfo, MmcData, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd, SdmmcError};
+use sdmmc_protocol::sdmmc_os::process_wait_unreliable;
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
-use tock_registers::interfaces::Writeable;
+use tock_registers::interfaces::{Readable, Writeable};
 use tock_registers::register_bitfields;
 use tock_registers::registers::{ReadOnly, ReadWrite, WriteOnly};
 
 const IRQ_ENABLE_MASK: u16 = 0xFFFF;
 const ERR_ENABLE_MASK: u16 = 0xFFFF;
+
+const HC_SPEC_VER_MASK: u16 = 0xFF;
+
+const PC_BUS_VSEL_1V8_MASK: u8 = 0x0000000A;
+const PC_BUS_VSEL_3V0_MASK: u8 = 0x0000000C;
+const PC_BUS_VSEL_3V3_MASK: u8 = 0x0000000E;
+const PC_BUS_PWR_MASK: u8 = 0x00000001;
+const PC_EMMC_HW_RST_MASK: u8 = 0x00000010;
+
+const INPUT_CLOCK_HZ: u32 = 187481262;
+
+const CC_EXT_MAX_DIV_CNT: u16 = 2046;
+const CC_SDCLK_FREQ_SEL_MASK: u32 = 0x000000FF;
+const CC_DIV_SHIFT: u32 = 8;
+const CC_SDCLK_FREQ_SEL_EXT_MAS: u32 = 0x00000003;
+const CC_EXT_DIV_SHIFT: u32 = 6;
+const CC_INT_CLK_EN_MASK: u32 = 0x00000001;
+const CC_SD_CLK_EN_MASK: u32 = 0x00000004;
+const CC_INT_CLK_STABLE_MASK: u16 = 0x00000002;
+
+const INIT_DELAY: u64 = 100000;
+
+const CLK_400_KHZ: u32 = 400000;
+
+const PSR_CARD_INSRT_MASK: u32 = 0x00010000;
+const PSR_INIHIBIT_CMD_MASK: u32 = 0x00000001;
+
+const NORM_INTR_ALL_MASK: u16 = 0x0000FFFF;
+const ERROR_INTR_ALL_MASK: u16 = 0x0000F3FF;
+
+const XWRST_ALL_MASK: u8 = 0x00000001;
+
+const CAP_VOLT_3V3_MASK: u32 = 0x01000000;
+const CAP_VOLT_3V0_MASK: u32 = 0x02000000;
+const CAP_VOLT_1V8_MASK: u32 = 0x04000000;
+
+const HC_DMA_ADMA2_64_MASK: u8 = 0x00000018;
+
+const INTR_CARD_MASK: u16 = 0x00000100;
+
+const BLK_SIZE_512_MASK: u16 = 0x200;
 
 //--------------------------------------------------------------------------------------------------
 // Bitfield Definitions (These are unchanged from the previous method)
@@ -152,8 +196,13 @@ impl SdhciRegister {
     }
 }
 
-struct SdhciHost {
+pub struct SdhciHost {
     register: &'static mut SdhciRegister,
+}
+
+const NS_IN_US: u64 = 1000;
+fn usleep(time : u64) {
+    process_wait_unreliable(time * NS_IN_US);
 }
 
 impl SdhciHost {
@@ -164,20 +213,244 @@ impl SdhciHost {
         // TODO: Call reset function here
         SdhciHost { register }
     }
+
+    fn disable_bus_power(&self) {
+        self.register.power_control.set(PC_EMMC_HW_RST_MASK);
+        usleep(1000);
+    }
+
+    fn check_reset_done(&self) -> Result<(), SdmmcError> {
+        let mut timeout: u32 = 100000;
+        while timeout > 0 {
+            if self.register.software_reset.get() == 0 {
+                return Ok(());
+            }
+            timeout -= 1;
+            usleep(1);
+        }
+        panic!("timeout")
+    }
+
+    fn reset(&self, value: u8) -> Result<(), SdmmcError> {
+        self.register.software_reset.set(value);
+        self.check_reset_done()
+    }
+
+    fn enable_bus_power(&self) {
+        self.register.power_control.set((PC_BUS_VSEL_3V3_MASK | PC_BUS_PWR_MASK) & !PC_EMMC_HW_RST_MASK);
+        usleep(200)
+    }
+
+    fn reset_config(&self) -> Result<(), SdmmcError> {
+        self.disable_bus_power();
+        if let Err(error) = self.reset(XWRST_ALL_MASK) {
+            return Err(error);
+        }
+        self.enable_bus_power();
+        Ok(())
+    }
+
+    fn config_power(&self, host_caps: u32) {
+        let power_level: u8;
+        if (host_caps & CAP_VOLT_3V3_MASK) != 0 {
+            power_level = PC_BUS_VSEL_3V3_MASK;
+        } else if (host_caps & CAP_VOLT_3V0_MASK) != 0 {
+            power_level = PC_BUS_VSEL_3V0_MASK;
+        } else if (host_caps & CAP_VOLT_1V8_MASK) != 0 {
+            power_level = PC_BUS_VSEL_1V8_MASK;
+        } else {
+            power_level = 0;
+        }
+
+        self.register.power_control.set(power_level | PC_BUS_PWR_MASK)
+    }
+
+    fn config_dma(&self) {
+        self.register.host_control_1.set(HC_DMA_ADMA2_64_MASK)
+    }
+
+    fn config_interrupt(&mut self) {
+        self.register.normal_interrupt_status_enable.set(NORM_INTR_ALL_MASK & (!INTR_CARD_MASK));
+        self.register.error_interrupt_status_enable.set(ERROR_INTR_ALL_MASK);
+        let _ = self.sdmmc_config_interrupt(false, false);
+    }
+
+    fn host_config(&mut self, host_caps: u32) {
+        self.config_power(host_caps);
+        self.config_dma();
+        self.config_interrupt();
+
+        /*
+        * Transfer mode register - default value
+        * DMA enabled, block count enabled, data direction card to host(read)
+        */
+        // let tm_dma_en_mask: u32 = 0x00000001;
+        // let tm_blk_cnt_en_mask: u32 = 0x00000002;
+        // let tm_dat_dir_sel_mask: u32 = 0x00000010;
+        // unsafe {
+        //     TRANSFER_MODE = tm_dma_en_mask | tm_blk_cnt_en_mask | tm_dat_dir_sel_mask;
+        // }
+
+        /* Set block size to 512 by default */
+        self.register.block_size.set(BLK_SIZE_512_MASK)
+    }
+
+    fn cfg_initialize(&mut self) -> u32 {
+        let hc_version = self.register.host_controller_version.get() & HC_SPEC_VER_MASK;
+        info!("host controller version: {}", hc_version);
+        assert_eq!(hc_version, 2);
+
+        let host_caps = self.register.capabilities_0.get();
+        info!("host controller capabilities: {}", host_caps);
+
+        if let Err(_) = self.reset_config() {
+            panic!("reset failed")
+        }
+
+        self.host_config(host_caps);
+
+        host_caps
+    }
+
+    fn set_tap_delay(&self) {
+        // TODO
+    }
+
+    fn calc_clock(&self, clk_freq: u32) -> u32 {
+        let mut divisor: u16 = 0;
+
+        if INPUT_CLOCK_HZ > clk_freq {
+            for div_cnt in (2 .. CC_EXT_MAX_DIV_CNT + 2).step_by(2) {
+                if INPUT_CLOCK_HZ / (div_cnt as u32) <= clk_freq {
+                    divisor = div_cnt >> 1;
+                    break;
+                }
+            }
+        }
+
+        ((divisor as u32 & CC_SDCLK_FREQ_SEL_MASK) << CC_DIV_SHIFT) | (((divisor as u32 >> 8) & CC_SDCLK_FREQ_SEL_EXT_MAS) << CC_EXT_DIV_SHIFT)
+    }
+
+    fn enable_clock(&self, mut clock: u16) -> Result<(), SdmmcError> {
+        clock |= CC_INT_CLK_EN_MASK as u16;
+        self.register.clock_control.set(clock);
+
+        let mut timeout: u32 = 150000;
+        while timeout > 0 {
+            if self.register.clock_control.get() & CC_INT_CLK_STABLE_MASK == CC_INT_CLK_STABLE_MASK {
+                break;
+            }
+            timeout -= 1;
+            usleep(1);
+        }
+        if timeout == 0 {
+            panic!("timeout");
+        }
+
+        /* Enable SD clock */
+        clock |= CC_SD_CLK_EN_MASK as u16;
+        self.register.clock_control.set(clock);
+
+        Ok(())
+    }
+
+    fn set_clock(&self, clk_freq: u32) -> Result<(), SdmmcError> {
+        /* Disable clock */
+        self.register.clock_control.set(0);
+
+        if clk_freq == 0 {
+            return Err(SdmmcError::EINVAL);
+        }
+
+        let clock = self.calc_clock(clk_freq);
+
+        self.enable_clock(clock as u16)
+    }
+
+    fn change_clk_freq(&self, clk_freq: u32) -> Result<(), SdmmcError> {
+        self.set_clock(clk_freq)
+    }
+
+    fn card_initialize(&self, _host_caps: u32) -> Result<(), SdmmcError> {
+        if let Err(error) = self.change_clk_freq(CLK_400_KHZ) {
+            return Err(error);
+        }
+
+        usleep(INIT_DELAY);
+
+        Ok(())
+    }
+
+    fn check_bus_idle(&self, value: u32) -> Result<(), SdmmcError> {
+        if self.register.present_state.get() & PSR_CARD_INSRT_MASK != 0 {
+            let mut timeout = 10000000;
+            while timeout > 0 {
+                if self.register.present_state.get() & value == 0 {
+                    break;
+                }
+                timeout -= 1;
+                usleep(1);
+            }
+            if timeout == 0 {
+                return Err(SdmmcError::EBUSY);
+            }
+        }
+        Ok(())
+    }
+
+    fn setup_cmd(&self, arg: u32, blk_cnt: u32) -> Result<(), SdmmcError> {
+        self.check_bus_idle(PSR_INIHIBIT_CMD_MASK)?;
+
+        self.register.block_count.set(blk_cnt as u16);
+        self.register.timeout_control.set(0xE);
+        self.register.argument.set(arg);
+
+        // acknowledge interrupt
+        self.register.normal_interrupt_status.set(NORM_INTR_ALL_MASK);
+        self.register.error_interrupt_status.set(ERROR_INTR_ALL_MASK);
+
+        Ok(())
+    }
 }
 
 /// Helper methods for registers with special handling.
 impl SdmmcHardware for SdhciHost {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        let host_caps = self.cfg_initialize();
+
+        if let Err(error) = self.card_initialize(host_caps) {
+            return Err(error);
+        }
+
+        let ios: MmcIos = MmcIos {
+            clock: CLK_400_KHZ as u64,
+            power_mode: MmcPowerMode::On,
+            bus_width: MmcBusWidth::Width1,
+            signal_voltage: MmcSignalVoltage::Voltage330,
+            enabled_irq: false,
+            emmc: None,
+            spi: None,
+        };
+
+        let info: HostInfo = HostInfo {
+            max_frequency: CLK_400_KHZ as u64, // ???
+            min_frequency: CLK_400_KHZ as u64, // ???
+            max_block_per_req: 1, // ???
+            // On odroid c4, the operating voltage is default to 3.3V
+            vdd: (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32), // ???
+            // TODO, figure out the correct value when we can power the card on and off
+            power_delay_ms: 5,
+        };
+
+        return Ok((ios, info, 0));
     }
 
     fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Ok(CLK_400_KHZ as u64)
     }
 
     fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Ok(())
     }
 
     fn sdmmc_read_datalanes(&self) -> Result<u8, SdmmcError> {
@@ -189,7 +462,15 @@ impl SdmmcHardware for SdhciHost {
         cmd: &SdmmcCmd,
         data: Option<&MmcData>,
     ) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+         if let Some(_) = data {
+            todo!()
+        }
+
+        self.setup_cmd(cmd.cmdarg, 0)?;
+
+        todo!();
+
+        Ok(())
     }
 
     fn sdmmc_receive_response(

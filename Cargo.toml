@@ -6,8 +6,8 @@ edition = "2024"
 [dependencies]
 sel4-microkit = { git = "https://github.com/seL4/rust-sel4.git", rev = "d2bc5cf71c5455f85898a4768e9dcbaea39e1a7e", features = ["alloc"] }
 sel4-panicking-env = { git = "https://github.com/seL4/rust-sel4.git", rev = "d2bc5cf71c5455f85898a4768e9dcbaea39e1a7e" }
-sdmmc_hal = { path = "sdmmc_hal/meson" }
-sdmmc_protocol = { path = "sdmmc_protocol"}
+sdmmc_protocol = { path = "sdmmc_protocol", features = ["dev-logs"]}
+sdhci = { path = "sdhci" }
 
 [build]
 build = "build.rs"
