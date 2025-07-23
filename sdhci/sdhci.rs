@@ -16,7 +16,7 @@ use sdmmc_protocol::sdmmc::{
 use sdmmc_protocol::sdmmc_os::process_wait_unreliable;
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sdmmc_protocol::{dev_log, info};
-use tock_registers::interfaces::{Readable, Writeable};
+use tock_registers::interfaces::{Debuggable, Readable, Writeable};
 use tock_registers::registers::{ReadOnly, ReadWrite, WriteOnly};
 use tock_registers::{RegisterLongName, UIntLike, register_bitfields};
 
@@ -121,7 +121,9 @@ register_bitfields![u32,
         CARD_STATE_STABLE OFFSET(17) NUMBITS(1) [],
         CARD_DETECT_PIN_LEVEL OFFSET(18) NUMBITS(1) [],
         WRITE_PROTECT_SWITCH_PIN_LEVEL OFFSET(19) NUMBITS(1) []
-    ],
+    ]
+];
+register_bitfields![u16,
     NORMAL_INTERRUPT [
         COMMAND_COMPLETE OFFSET(0) NUMBITS(1) [],
         TRANSFER_COMPLETE OFFSET(1) NUMBITS(1) [],
@@ -132,6 +134,12 @@ register_bitfields![u32,
         CARD_INSERTION OFFSET(6) NUMBITS(1) [],
         CARD_REMOVAL OFFSET(7) NUMBITS(1) [],
         CARD_INTERRUPT OFFSET(8) NUMBITS(1) [],
+        INT_A OFFSET(9) NUMBITS(1) [],
+        INT_B OFFSET(10) NUMBITS(1) [],
+        INT_C OFFSET(11) NUMBITS(1) [],
+        RE_TUNING OFFSET(12) NUMBITS(1) [],
+        FX OFFSET(13) NUMBITS(1) [],
+        RESEREVED OFFSET(14) NUMBITS(1) [],
         ERROR_INTERRUPT OFFSET(15) NUMBITS(1) []
     ],
     ERROR_INTERRUPT [
@@ -742,13 +750,32 @@ impl SdmmcHardware for SdhciHost {
         cmd: &SdmmcCmd,
         response: &mut [u32; 4],
     ) -> Result<(), SdmmcError> {
-        let status = self.register.normal_interrupt_status.get();
+        let status = self.register.normal_interrupt_status.extract();
 
-        if (cmd.cmdidx == 19 || cmd.cmdidx == 21) && (status & INTR_BRR_MASK) != 0 {
+        let all_fields = &[
+            (NORMAL_INTERRUPT::COMMAND_COMPLETE, "command_complete"),
+            (NORMAL_INTERRUPT::TRANSFER_COMPLETE, "transfer_complete"),
+            (NORMAL_INTERRUPT::BLOCK_GAP_EVENT, "block_gap_event"),
+            (NORMAL_INTERRUPT::DMA_INTERRUPT, "dma_interrupt"),
+            (NORMAL_INTERRUPT::BUFFER_WRITE_READY, "buffer_write_ready"),
+            (NORMAL_INTERRUPT::BUFFER_READ_READY, "buffer_read_ready"),
+            (NORMAL_INTERRUPT::CARD_INSERTION, "card_insertion"),
+            (NORMAL_INTERRUPT::CARD_REMOVAL, "card_removal"),
+            (NORMAL_INTERRUPT::CARD_INTERRUPT, "card_interrupt"),
+            (NORMAL_INTERRUPT::INT_A, "int_a (embedded)"),
+            (NORMAL_INTERRUPT::INT_B, "int_b (embedded)"),
+            (NORMAL_INTERRUPT::INT_C, "int_c (embedded)"),
+            (NORMAL_INTERRUPT::RE_TUNING, "re-tuning"),
+            (NORMAL_INTERRUPT::FX, "FX"),
+            (NORMAL_INTERRUPT::RESEREVED, "reserved"),
+            (NORMAL_INTERRUPT::ERROR_INTERRUPT, "error_interrupt"),
+        ];
+
+        if (cmd.cmdidx == 19 || cmd.cmdidx == 21) && (status.get() & INTR_BRR_MASK) != 0 {
             self.register.normal_interrupt_status.set(INTR_BRR_MASK);
         }
 
-        if (status & INTR_ERR_MASK) != 0 {
+        if (status.get() & INTR_ERR_MASK) != 0 {
             let error: SdmmcError;
             if (self.register.error_interrupt_status.get() & !INTR_ERR_CT_MASK) == 0 {
                 error = SdmmcError::ETIMEDOUT;
@@ -760,25 +787,41 @@ impl SdmmcHardware for SdhciHost {
                 .error_interrupt_status
                 .set(ERROR_INTR_ALL_MASK);
             dev_log!(
-                "<RECV> [{} ({})], response: [{}], arg: {:#x}, status: {:#x}\n",
+                "<RECV> [{} ({})], response: [{}], arg: {:#x}, status:",
                 sd_get_cmd_name(cmd.cmdidx),
                 cmd.cmdidx,
                 sd_get_response_type(cmd.resp_type),
-                cmd.cmdarg,
-                status
+                cmd.cmdarg
             );
+            for (field, name) in all_fields.iter() {
+                if status.is_set(*field) {
+                    dev_log!(" {},", name);
+                }
+            }
+            if all_fields.iter().all(|(field, _)| !status.is_set(*field)) {
+                dev_log!(" none");
+            }
+            dev_log!("\n");
             return Err(error);
         }
 
-        if (status & INTR_CC_MASK) != INTR_CC_MASK {
+        if (status.get() & INTR_CC_MASK) != INTR_CC_MASK {
             dev_log!(
-                "<RECV> [{} ({})], response: [{}], arg: {:#x}, status: {:#x}\n",
+                "<RECV> [{} ({})], response: [{}], arg: {:#x}, status:",
                 sd_get_cmd_name(cmd.cmdidx),
                 cmd.cmdidx,
                 sd_get_response_type(cmd.resp_type),
                 cmd.cmdarg,
-                status
             );
+            for (field, name) in all_fields.iter() {
+                if status.is_set(*field) {
+                    dev_log!(" {},", name);
+                }
+            }
+            if all_fields.iter().all(|(field, _)| !status.is_set(*field)) {
+                dev_log!(" none");
+            }
+            dev_log!("\n");
             return Err(SdmmcError::EBUSY);
         }
 
@@ -798,28 +841,44 @@ impl SdmmcHardware for SdhciHost {
             *rsp2 = self.register.response[1].get();
             *rsp3 = self.register.response[0].get();
             dev_log!(
-                "<RECV> [{} ({})], response: [{}], arg: {:#x}, status: {:#x}, response: [{:#x}, {:#x}, {:#x}, {:#x}]\n",
+                "<RECV> [{} ({})], response: [{}], arg: {:#x}, response: [{:#x}, {:#x}, {:#x}, {:#x}], status:",
                 sd_get_cmd_name(cmd.cmdidx),
                 cmd.cmdidx,
                 sd_get_response_type(cmd.resp_type),
                 cmd.cmdarg,
-                status,
                 *rsp0,
                 *rsp1,
                 *rsp2,
                 *rsp3
             );
+            for (field, name) in all_fields.iter() {
+                if status.is_set(*field) {
+                    dev_log!(" {},", name);
+                }
+            }
+            if all_fields.iter().all(|(field, _)| !status.is_set(*field)) {
+                dev_log!(" none");
+            }
+            dev_log!("\n");
         } else {
             *rsp0 = self.register.response[0].get();
             dev_log!(
-                "<RECV> [{} ({})], response: [{}], arg: {:#x}, status: {:#x}, response: [{:#x}]\n",
+                "<RECV> [{} ({})], response: [{}], arg: {:#x}, response: [{:#x}], status:",
                 sd_get_cmd_name(cmd.cmdidx),
                 cmd.cmdidx,
                 sd_get_response_type(cmd.resp_type),
                 cmd.cmdarg,
-                status,
                 *rsp0,
             );
+            for (field, name) in all_fields.iter() {
+                if status.is_set(*field) {
+                    dev_log!(" {},", name);
+                }
+            }
+            if all_fields.iter().all(|(field, _)| !status.is_set(*field)) {
+                dev_log!(" none");
+            }
+            dev_log!("\n");
         }
 
         Ok(())
