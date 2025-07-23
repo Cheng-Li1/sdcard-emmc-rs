@@ -38,8 +38,7 @@ unsafe fn print_one_block(ptr: *const u8, num: usize) {
 
 /// Since in .system file, the page we are providing to tune_performance function is uncached
 /// we do not need to provide a real cache invalidate function
-fn dummy_cache_invalidate_function() {
-}
+fn dummy_cache_invalidate_function() {}
 
 #[protection_domain(heap_size = 0x1000)]
 fn init() -> impl Handler {
@@ -56,7 +55,14 @@ fn init() -> impl Handler {
 
     assert!((physical_memory_addr as usize).is_multiple_of(8));
 
-    let hal: SdhciHost = unsafe { SdhciHost::new(0xff170000, unsafe_stolen_memory, dummy_cache_invalidate_function, physical_memory_addr as u32) };
+    let hal: SdhciHost = unsafe {
+        SdhciHost::new(
+            0xff170000,
+            unsafe_stolen_memory,
+            dummy_cache_invalidate_function,
+            physical_memory_addr as u32,
+        )
+    };
 
     // Handling result in two different ways, by matching and unwrap_or_else
     let res = SdmmcProtocol::new(hal, TIMER, None::<Odroidc4VoltageSwitch>);
@@ -70,7 +76,7 @@ fn init() -> impl Handler {
         .unwrap_or_else(|error| panic!("SDMMC: Error at setup {:?}", error));
 
     // Print the card info after the init process
-    sdmmc_host.print_card_info();
+    // sdmmc_host.print_card_info();
 
     let _ = sdmmc_host.config_interrupt(false, false);
 
