@@ -38,7 +38,8 @@ unsafe fn print_one_block(ptr: *const u8, num: usize) {
 
 /// Since in .system file, the page we are providing to tune_performance function is uncached
 /// we do not need to provide a real cache invalidate function
-fn dummy_cache_invalidate_function() {}
+fn dummy_cache_invalidate_function() {
+}
 
 #[protection_domain(heap_size = 0x1000)]
 fn init() -> impl Handler {
@@ -48,15 +49,14 @@ fn init() -> impl Handler {
         sdmmc_protocol::sdmmc_os::set_logger(&SERIAL).unwrap();
     }
 
-    let hal: SdhciHost =
-        unsafe { SdhciHost::new(0xff170000) };
-
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
-    let unsafe_stolen_memory: *mut [u8; 64] = 0xf5500000 as *mut [u8; 64];
-    let physical_memory_addr: u64 = 0xf5500000;
+    let unsafe_stolen_memory: *mut [u8; 512] = 0x70000000 as *mut [u8; 512];
+    let physical_memory_addr: u64 = 0x70000000;
 
     assert!((physical_memory_addr as usize).is_multiple_of(8));
+
+    let hal: SdhciHost = unsafe { SdhciHost::new(0xff170000, unsafe_stolen_memory, dummy_cache_invalidate_function, physical_memory_addr as u32) };
 
     // Handling result in two different ways, by matching and unwrap_or_else
     let res = SdmmcProtocol::new(hal, TIMER, None::<Odroidc4VoltageSwitch>);
@@ -75,9 +75,9 @@ fn init() -> impl Handler {
     let _ = sdmmc_host.config_interrupt(false, false);
 
     // Print out one block to check if read works
-    // sdmmc_host.test_read_one_block(0, 0xf5500000);
+    sdmmc_host.test_read_one_block(1, 0x70010000);
 
-    /* 
+    /*
     unsafe {
         sdmmc_host
             .tune_performance(

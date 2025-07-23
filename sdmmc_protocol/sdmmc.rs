@@ -932,6 +932,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
 
     /// Since we are using u8 here, the endianness does matter
     /// I should change the process of access raw memory to using volatile read
+    /// I should call the cache_invalidate function
     fn tune_sdcard_performance(
         &mut self,
         memory: *mut [u8; 64],
