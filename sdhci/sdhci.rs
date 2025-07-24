@@ -316,6 +316,82 @@ fn sd_get_response_type(resp_type: u32) -> &'static str {
     }
 }
 
+fn sdhci_print_present_state_string(present_state: u32) {
+    dev_log!("present state: ");
+
+    if (present_state & (1 << 0)) != 0 {
+        dev_log!("CMD unusable, ");
+    }
+
+    if (present_state & (1 << 1)) != 0 {
+        dev_log!("DAT unusable, ");
+    }
+
+    if (present_state & (1 << 2)) == 0 {
+        dev_log!("DAT inactive, ");
+    } else {
+        dev_log!("DAT active, ");
+    }
+
+    if (present_state & (1 << 3)) != 0 {
+        dev_log!("needs re-tuning, ");
+    }
+
+    if (present_state & (1 << 8)) != 0 {
+        dev_log!("write transfer active, ");
+    }
+
+    if (present_state & (1 << 9)) != 0 {
+        dev_log!("read transfer active, ");
+    }
+
+    if (present_state & (1 << 10)) != 0 {
+        dev_log!("buffer write enable, ");
+    }
+
+    if (present_state & (1 << 11)) != 0 {
+        dev_log!("buffer read enable, ");
+    }
+
+    if (present_state & (1 << 16)) == 0 {
+        dev_log!("card reset or debouncing or no card, ");
+    } else {
+        dev_log!("card inserted, ");
+    }
+
+    if (present_state & (1 << 17)) == 0 {
+        dev_log!("card unstable, ");
+    }
+
+    if (present_state & (1 << 18)) == 0 {
+        dev_log!("no card present, ");
+    } else {
+        dev_log!("card present, ");
+    }
+
+    if (present_state & (1 << 19)) == 0 {
+        dev_log!("write protected, ");
+    } else {
+        dev_log!("write enabled, ");
+    }
+
+    dev_log!("DAT: {}{}{}{}, ", ((present_state & (1 << 20)) != 0) as i32, ((present_state & (1 << 21)) != 0) as i32, ((present_state & (1 << 22)) != 0) as i32, ((present_state & (1 << 23)) != 0) as i32);
+
+    dev_log!("CMD: {}, ", ((present_state & (1 << 24)) != 0) as i32);
+
+    if (present_state & (1 << 25)) == 0 {
+        dev_log!("host regulator voltage not stable, ");
+    } else {
+        dev_log!("host regulator voltage stable, ");
+    }
+
+    if (present_state & (1 << 27)) != 0 {
+        dev_log!("command cannot be issued, ");
+    }
+
+    dev_log!("\n")
+}
+
 impl SdhciRegister {
     unsafe fn new(sdmmc_register_base: u64) -> &'static mut SdhciRegister {
         unsafe { &mut *(sdmmc_register_base as *mut SdhciRegister) }
@@ -747,6 +823,10 @@ impl SdmmcHardware for SdhciHost {
             power_delay_ms: 5,
         };
 
+        sdhci_print_present_state_string(self.register.present_state.get());
+
+        dev_log!("============== initialised ===============\n");
+
         return Ok((ios, info, 0));
     }
 
@@ -866,7 +946,8 @@ impl SdmmcHardware for SdhciHost {
             dev_log!(" none");
         }
         dev_log!("\n");
-        dev_log!("present state: {:#x}\n", self.register.present_state.get());
+
+        sdhci_print_present_state_string(self.register.present_state.get());
 
         if (cmd.cmdidx == 19 || cmd.cmdidx == 21) && (status.get() & INTR_BRR_MASK) != 0 {
             self.register.normal_interrupt_status.set(INTR_BRR_MASK);
