@@ -18,7 +18,7 @@ use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sdmmc_protocol::{dev_log, info};
 use tock_registers::interfaces::{Readable, Writeable};
 use tock_registers::registers::{ReadOnly, ReadWrite, WriteOnly};
-use tock_registers::{RegisterLongName, UIntLike, register_bitfields};
+use tock_registers::{register_bitfields, LocalRegisterCopy, RegisterLongName, UIntLike};
 
 const IRQ_ENABLE_MASK: u16 = 0xFFFF;
 const ERR_ENABLE_MASK: u16 = 0xFFFF;
@@ -376,19 +376,7 @@ fn sdhci_print_present_state_string(present_state: u32) {
 
     dev_log!("DAT: {}{}{}{}, ", ((present_state & (1 << 23)) != 0) as i32, ((present_state & (1 << 22)) != 0) as i32, ((present_state & (1 << 21)) != 0) as i32, ((present_state & (1 << 20)) != 0) as i32);
 
-    dev_log!("CMD: {}, ", ((present_state & (1 << 24)) != 0) as i32);
-
-    if (present_state & (1 << 25)) == 0 {
-        dev_log!("host regulator voltage not stable, ");
-    } else {
-        dev_log!("host regulator voltage stable, ");
-    }
-
-    if (present_state & (1 << 27)) != 0 {
-        dev_log!("command cannot be issued, ");
-    }
-
-    dev_log!("\n")
+    dev_log!("CMD: {}\n", ((present_state & (1 << 24)) != 0) as i32);
 }
 
 fn sdhci_print_adma2_descriptor_64(desc: &ADMA2Descriptor64) {
@@ -544,6 +532,157 @@ fn sdhci_print_capabilities(capabilities_0: u32, capabilities_1: u32) {
         dev_log!("clock multiplier: {}, ", clock_multiplier + 1);
     }
 
+    dev_log!("\n");
+}
+
+fn sdhci_print_command(command: u16) {
+    let index = (command & 0x3F00) >> 8;
+    dev_log!("{} ({}), ", sd_get_cmd_name(index as u32), index);
+
+    let cmd_type = (command & 0xC0) >> 6;
+    if cmd_type == 0 {
+        dev_log!("normal, ");
+    } else if cmd_type == 1 {
+        dev_log!("suspend, ");
+    } else if cmd_type == 2 {
+        dev_log!("resume, ");
+    } else {
+        dev_log!("abort, ");
+    }
+
+    if (command & (1 << 5)) == 0 {
+        dev_log!("no data present, ");
+    } else {
+        dev_log!("data present, ");
+    }
+
+    if (command & (1 << 4)) == 0 {
+        dev_log!("no index check, ");
+    } else {
+        dev_log!("index check, ");
+    }
+
+    if (command & (1 << 3)) == 0 {
+        dev_log!("no CRC check, ");
+    } else {
+        dev_log!("CRC check, ");
+    }
+
+    let response_type = command & 0x3;
+    if response_type == 0 {
+        dev_log!("no response");
+    } else if response_type == 1 {
+        dev_log!("response length 136");
+    } else if response_type == 1 {
+        dev_log!("response length 48");
+    } else if response_type == 1 {
+        dev_log!("response length 48 with Busy check");
+    }
+
+    dev_log!("\n");
+}
+
+fn sdhci_print_transfer_mode(mode: u16) {
+    if (mode & (1 << 0)) != 0 {
+        dev_log!("DMA transfer, ");
+    }
+
+    if (mode & (1 << 1)) != 0 {
+        dev_log!("block count enable, ");
+    }
+
+    if (mode & (1 << 4)) == 0 {
+        dev_log!("write, ");
+    } else {
+        dev_log!("read, ");
+    }
+
+    if (mode & (1 << 5)) == 0 {
+        dev_log!("single block, ");
+    } else {
+        dev_log!("multiple block, ");
+    }
+
+    if (mode & (1 << 6)) == 0 {
+        dev_log!("MMIO response, ");
+    } else {
+        dev_log!("SDIO response, ");
+    }
+
+    if (mode & (1 << 7)) != 0 {
+        dev_log!("response error check, ");
+    }
+
+    if (mode & (1 << 8)) == 0 {
+        dev_log!("response interrupt, ");
+    }
+
+    dev_log!("\n");
+}
+
+fn sdhci_print_host_control(host_control_1: u8) {
+    dev_log!("host controller: ");
+    if (host_control_1 & (1 << 5)) == 0 {
+        if (host_control_1 & (1 << 1)) == 0 {
+            dev_log!("1-bit, ");
+        } else {
+            dev_log!("4-bit, ");
+        }
+    } else {
+        dev_log!("8-bit, ");
+    }
+
+    let dma_select = (host_control_1 & 0x18) >> 3;
+    if dma_select == 0 {
+        dev_log!("SDMA, ");
+    } else if dma_select == 1 {
+        dev_log!("reserved DMA select, ");
+    } else if dma_select == 2 {
+        dev_log!("32-bit ADMA2, ");
+    } else {
+        dev_log!("64-bit ADMA2, ");
+    }
+
+    if (host_control_1 & (1 << 2)) == 0 {
+        dev_log!("normal speed, ");
+    } else {
+        dev_log!("high speed, ");
+    }
+
+    dev_log!("\n");
+}
+
+fn sdhci_print_normal_interrupt_status(status: &LocalRegisterCopy<u16, NORMAL_INTERRUPT::Register>) {
+    let all_fields = &[
+        (NORMAL_INTERRUPT::COMMAND_COMPLETE, "command_complete"),
+        (NORMAL_INTERRUPT::TRANSFER_COMPLETE, "transfer_complete"),
+        (NORMAL_INTERRUPT::BLOCK_GAP_EVENT, "block_gap_event"),
+        (NORMAL_INTERRUPT::DMA_INTERRUPT, "dma_interrupt"),
+        (NORMAL_INTERRUPT::BUFFER_WRITE_READY, "buffer_write_ready"),
+        (NORMAL_INTERRUPT::BUFFER_READ_READY, "buffer_read_ready"),
+        (NORMAL_INTERRUPT::CARD_INSERTION, "card_insertion"),
+        (NORMAL_INTERRUPT::CARD_REMOVAL, "card_removal"),
+        (NORMAL_INTERRUPT::CARD_INTERRUPT, "card_interrupt"),
+        (NORMAL_INTERRUPT::INT_A, "int_a (embedded)"),
+        (NORMAL_INTERRUPT::INT_B, "int_b (embedded)"),
+        (NORMAL_INTERRUPT::INT_C, "int_c (embedded)"),
+        (NORMAL_INTERRUPT::RE_TUNING, "re-tuning"),
+        (NORMAL_INTERRUPT::FX, "FX"),
+        (NORMAL_INTERRUPT::RESEREVED, "reserved"),
+        (NORMAL_INTERRUPT::ERROR_INTERRUPT, "error_interrupt"),
+    ];
+
+    dev_log!("status: ");
+    if status.get() == u16::MAX {
+        return dev_log!("all\n");
+    } else if status.get() == 0 {
+        return dev_log!("none\n");
+    }
+    for (field, name) in all_fields.iter() {
+        if status.is_set(*field) {
+            dev_log!("{}, ", name);
+        }
+    }
     dev_log!("\n");
 }
 
@@ -781,7 +920,7 @@ impl SdhciHost {
             CC_INT_CLK_STABLE_MASK,
             150000,
         )?;
-        dev_log!("[wait] register.clock_control, mask: {}, value: {}\n", CC_INT_CLK_STABLE_MASK, CC_INT_CLK_STABLE_MASK);
+        dev_log!("[wait] clock_control, mask: {}, value: {}\n", CC_INT_CLK_STABLE_MASK, CC_INT_CLK_STABLE_MASK);
 
         clock |= CC_SD_CLK_EN_MASK;
         self.register.clock_control.set(clock);
@@ -815,7 +954,8 @@ impl SdhciHost {
         usleep(INIT_DELAY);
 
         self.register.normal_interrupt_status.set(NORM_INTR_ALL_MASK);
-        dev_log!("[set] normal_interrupt_status: {:#x}\n", NORM_INTR_ALL_MASK);
+        dev_log!("[set] normal_interrupt_status: ");
+        sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(NORM_INTR_ALL_MASK));
         self.register.error_interrupt_status.set(ERROR_INTR_ALL_MASK);
         dev_log!("[set] error_interrupt_status: {:#x}\n", ERROR_INTR_ALL_MASK);
 
@@ -853,7 +993,7 @@ impl SdhciHost {
         Ok(())
     }
 
-    fn send_cmd(&self, cmdidx: u32, resp_type: u32) {
+    fn send_cmd(&self, cmdidx: u32, resp_type: u32, present: bool) {
         if cmdidx != 21 && cmdidx != 19 {
             let _present_state = self.register.present_state.get();
             // dev_log!("[GET] present_state: {:#x}\n", _present_state);
@@ -862,6 +1002,9 @@ impl SdhciHost {
         }
 
         let mut command: u16 = (cmdidx as u16) << 8;
+        if present {
+            command |= 1 << 5;
+        }
         if (resp_type & MMC_RSP_PRESENT) != 0 {
             if (resp_type & MMC_RSP_136) != 0 {
                 command |= 0b01;
@@ -879,9 +1022,11 @@ impl SdhciHost {
         }
 
         self.register.transfer_mode.set(self.transfer_mode);
-        dev_log!("[set] transfer_mode: {:#x}\n", self.transfer_mode);
+        dev_log!("[set] transfer_mode: ");
+        sdhci_print_transfer_mode(self.transfer_mode);
         self.register.command.set(command);
-        dev_log!("[set] command: {:#x}\n", command);
+        dev_log!("[set] command: ");
+        sdhci_print_command(command);
     }
 
     fn setup_read_dma(
@@ -969,6 +1114,7 @@ impl SdmmcHardware for SdhciHost {
         };
 
         sdhci_print_present_state_string(self.register.present_state.get());
+        sdhci_print_host_control(self.register.host_control_1.get());
 
         dev_log!("============== initialised ===============\n");
 
@@ -1044,7 +1190,7 @@ impl SdmmcHardware for SdhciHost {
         //     todo!("wait for data transform")
         // }
 
-        self.send_cmd(cmd.cmdidx, cmd.resp_type);
+        self.send_cmd(cmd.cmdidx, cmd.resp_type, data.is_some());
 
         Ok(())
     }
@@ -1056,47 +1202,21 @@ impl SdmmcHardware for SdhciHost {
     ) -> Result<(), SdmmcError> {
         let status = self.register.normal_interrupt_status.extract();
 
-        let all_fields = &[
-            (NORMAL_INTERRUPT::COMMAND_COMPLETE, "command_complete"),
-            (NORMAL_INTERRUPT::TRANSFER_COMPLETE, "transfer_complete"),
-            (NORMAL_INTERRUPT::BLOCK_GAP_EVENT, "block_gap_event"),
-            (NORMAL_INTERRUPT::DMA_INTERRUPT, "dma_interrupt"),
-            (NORMAL_INTERRUPT::BUFFER_WRITE_READY, "buffer_write_ready"),
-            (NORMAL_INTERRUPT::BUFFER_READ_READY, "buffer_read_ready"),
-            (NORMAL_INTERRUPT::CARD_INSERTION, "card_insertion"),
-            (NORMAL_INTERRUPT::CARD_REMOVAL, "card_removal"),
-            (NORMAL_INTERRUPT::CARD_INTERRUPT, "card_interrupt"),
-            (NORMAL_INTERRUPT::INT_A, "int_a (embedded)"),
-            (NORMAL_INTERRUPT::INT_B, "int_b (embedded)"),
-            (NORMAL_INTERRUPT::INT_C, "int_c (embedded)"),
-            (NORMAL_INTERRUPT::RE_TUNING, "re-tuning"),
-            (NORMAL_INTERRUPT::FX, "FX"),
-            (NORMAL_INTERRUPT::RESEREVED, "reserved"),
-            (NORMAL_INTERRUPT::ERROR_INTERRUPT, "error_interrupt"),
-        ];
-
         dev_log!(
-            "\n<RECV> [{} ({})], response: [{}], arg: {:#x}, status:",
+            "\n<RECV> [{} ({})], response: [{}], arg: {:#x}, ",
             sd_get_cmd_name(cmd.cmdidx),
             cmd.cmdidx,
             sd_get_response_type(cmd.resp_type),
             cmd.cmdarg
         );
-        for (field, name) in all_fields.iter() {
-            if status.is_set(*field) {
-                dev_log!(" {},", name);
-            }
-        }
-        if all_fields.iter().all(|(field, _)| !status.is_set(*field)) {
-            dev_log!(" none");
-        }
-        dev_log!("\n");
+        sdhci_print_normal_interrupt_status(&status);
 
         sdhci_print_present_state_string(self.register.present_state.get());
 
         if (cmd.cmdidx == 19 || cmd.cmdidx == 21) && (status.get() & INTR_BRR_MASK) != 0 {
             self.register.normal_interrupt_status.set(INTR_BRR_MASK);
-            dev_log!("[set] normal_interrupt_status: {:#x}\n", INTR_BRR_MASK);
+            dev_log!("[set] normal_interrupt_status: ");
+            sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(INTR_BRR_MASK));
         }
 
         if (status.get() & INTR_ERR_MASK) != 0 {
@@ -1114,19 +1234,28 @@ impl SdmmcHardware for SdhciHost {
             return Err(error);
         }
 
-        if (status.get() & INTR_CC_MASK) != INTR_CC_MASK {
-            return Err(SdmmcError::EBUSY);
-        }
+        if cmd.cmdidx == 17 {
+            if (status.get() & INTR_TC_MASK) != INTR_TC_MASK {
+                return Err(SdmmcError::EBUSY);
+            }
 
-        // if cmd.cmdidx == 17 {
-        //     if (status & INTR_TC_MASK) != INTR_TC_MASK {
-        //         return Err(SdmmcError::EBUSY);
-        //     }
-        // }
+            if (status.get() & INTR_CC_MASK) != INTR_CC_MASK {
+                panic!("command should have completed");
+            }
+
+            self.register.normal_interrupt_status.set(INTR_TC_MASK);
+            dev_log!("[set] normal_interrupt_status: ");
+            sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(INTR_TC_MASK));
+        } else {
+            if (status.get() & INTR_CC_MASK) != INTR_CC_MASK {
+                return Err(SdmmcError::EBUSY);
+            }
+        }
 
         /* Write to clear bit */
         self.register.normal_interrupt_status.set(INTR_CC_MASK);
-        dev_log!("[set] normal_interrupt_status: {:#x}\n", INTR_CC_MASK);
+        dev_log!("[set] normal_interrupt_status: ");
+        sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(INTR_CC_MASK));
 
         let [rsp0, rsp1, rsp2, rsp3] = response;
         if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_136 != 0 {
