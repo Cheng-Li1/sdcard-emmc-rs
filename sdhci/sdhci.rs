@@ -89,7 +89,6 @@ struct ADMA2Descriptor64 {
     attribute: u16,
     length: u16,
     address: u64,
-    _padding: u32,
 }
 
 #[repr(C, packed)]
@@ -375,7 +374,7 @@ fn sdhci_print_present_state_string(present_state: u32) {
         dev_log!("write enabled, ");
     }
 
-    dev_log!("DAT: {}{}{}{}, ", ((present_state & (1 << 20)) != 0) as i32, ((present_state & (1 << 21)) != 0) as i32, ((present_state & (1 << 22)) != 0) as i32, ((present_state & (1 << 23)) != 0) as i32);
+    dev_log!("DAT: {}{}{}{}, ", ((present_state & (1 << 23)) != 0) as i32, ((present_state & (1 << 22)) != 0) as i32, ((present_state & (1 << 21)) != 0) as i32, ((present_state & (1 << 20)) != 0) as i32);
 
     dev_log!("CMD: {}, ", ((present_state & (1 << 24)) != 0) as i32);
 
@@ -419,7 +418,133 @@ fn sdhci_print_adma2_descriptor_64(desc: &ADMA2Descriptor64) {
 
     let length = desc.length;
     let address = desc.address;
-    dev_log!("length: {}, address: {:#x}\n", length, address);
+    dev_log!("length: {}, address: {:#x}\n", if length == 0 {65536} else {length as u32}, address);
+}
+
+fn sdhci_print_capabilities(capabilities_0: u32, capabilities_1: u32) {
+    if (capabilities_0 & 0b111111) == 0 {
+        dev_log!("unknown timeout clock frequency, ");
+    } else if (capabilities_0 & (1 << 7)) == 0 {
+        dev_log!("timeout clock: {} kHz, ", capabilities_0 & (1 << 7));
+    } else {
+        dev_log!("timeout clock: {} MHz, ", capabilities_0 & (1 << 7));
+    }
+
+    if (capabilities_0 & 0xFF00) == 0 {
+        dev_log!("unknown base clock frequency, ");
+    } else {
+        dev_log!("base clock: {} MHz, ", (capabilities_0 & 0xFF00) >> 8);
+    }
+
+    let block_len = (capabilities_0 & 0x30000) >> 16;
+    if block_len == 3 {
+        dev_log!("unknown max block length, ");
+    } else {
+        dev_log!("max block length: {}, ", 512 << block_len);
+    }
+
+    dev_log!("\n");
+
+    if (capabilities_0 & (1 << 19)) == 0 {
+        dev_log!("adma2 not supported, ");
+    } else {
+        dev_log!("adma2 supported, ");
+    }
+
+    if (capabilities_0 & (1 << 21)) == 0 {
+        dev_log!("high speed not supported, ");
+    } else {
+        dev_log!("high speed supported, ");
+    }
+
+    if (capabilities_0 & (1 << 22)) == 0 {
+        dev_log!("sdma not supported, ");
+    } else {
+        dev_log!("sdma supported, ");
+    }
+
+    if (capabilities_0 & (1 << 23)) == 0 {
+        dev_log!("suspend/resume not supported, ");
+    } else {
+        dev_log!("suspend/resume supported, ");
+    }
+
+    dev_log!("\n");
+
+    if (capabilities_0 & (1 << 24)) == 0 {
+        dev_log!("3.3V not supported, ");
+    } else {
+        dev_log!("3.3V supported, ");
+    }
+
+    if (capabilities_0 & (1 << 25)) == 0 {
+        dev_log!("3.0V not supported, ");
+    } else {
+        dev_log!("3.0V supported, ");
+    }
+
+    if (capabilities_0 & (1 << 26)) == 0 {
+        dev_log!("1.8V not supported, ");
+    } else {
+        dev_log!("1.8V supported, ");
+    }
+
+    dev_log!("\n");
+
+    if (capabilities_0 & (1 << 27)) == 0 {
+        dev_log!("64-bit system address V4 not supported, ");
+    } else {
+        dev_log!("64-bit system address V4 supported, ");
+    }
+
+    if (capabilities_0 & (1 << 28)) == 0 {
+        dev_log!("64-bit system address V3 not supported, ");
+    } else {
+        dev_log!("64-bit system address V3 supported, ");
+    }
+
+    dev_log!("\n");
+    
+    if (capabilities_0 & (1 << 29)) == 0 {
+        dev_log!("async interrupt not supported, ");
+    } else {
+        dev_log!("async interrupt supported, ");
+    }
+
+    if (capabilities_0 & (1 << 30)) == 0 && (capabilities_0 & (1 << 31)) == 0 {
+        dev_log!("removable card slot, ");
+    } else {
+        dev_log!("unknown slot type, ");
+    }
+
+    dev_log!("\n");
+
+    if (capabilities_1 & (1 << 0)) == 0 {
+        dev_log!("SDR50 not supported, ");
+    } else {
+        dev_log!("SDR50 supported, ");
+    }
+
+    if (capabilities_1 & (1 << 1)) == 0 {
+        dev_log!("SDR104 not supported, ");
+    } else {
+        dev_log!("SDR104 supported, ");
+    }
+
+    if (capabilities_1 & (1 << 2)) == 0 {
+        dev_log!("DDR50 not supported, ");
+    } else {
+        dev_log!("DDR50 supported, ");
+    }
+
+    let clock_multiplier = (capabilities_1 & 0xFF0000) >> 16;
+    if clock_multiplier == 0 {
+        dev_log!("clock multiplier not supported, ");
+    } else {
+        dev_log!("clock multiplier: {}, ", clock_multiplier + 1);
+    }
+
+    dev_log!("\n");
 }
 
 impl SdhciRegister {
@@ -817,6 +942,8 @@ impl SdhciHost {
 /// Helper methods for registers with special handling.
 impl SdmmcHardware for SdhciHost {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
+        sdhci_print_capabilities(self.register.capabilities_0.get(), self.register.capabilities_1.get());
+
         dev_log!("\n<init>\n");
         let host_caps = self.cfg_initialize();
         self.card_initialize(host_caps)?;

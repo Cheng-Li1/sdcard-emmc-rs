@@ -50,7 +50,7 @@ fn init() -> impl Handler {
 
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
-    let unsafe_stolen_memory: *mut [u8; 512] = 0x70000000 as *mut [u8; 512];
+    let unsafe_stolen_memory: *mut [u8; 384] = 0x70000000 as *mut [u8; 384];
     let physical_memory_addr: u64 = 0x70000000;
 
     assert!((physical_memory_addr as usize).is_multiple_of(8));
