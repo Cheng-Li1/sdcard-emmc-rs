@@ -3,6 +3,7 @@
     <!-- Device memory region -->
     <!-- <memory_region name="gpio" size="0x1000" phys_addr="0xff800000"/> -->
     <memory_region name="sdmmc" size="0x1000" phys_addr="0xff170000" />
+    <memory_region name="iou_slcr" size="0x10000" phys_addr="0xff180000" />
 
     <!-- Private data region -->
     <memory_region name="data_region" size="0x20000" phys_addr="0x70000000" />
@@ -10,6 +11,7 @@
     <protection_domain name="sdmmc_driver" priority="100" >
         <program_image path="sdmmc_driver.elf" />
         <map mr="sdmmc" vaddr="0xff170000" perms="rw" cached="false" />
+        <map mr="iou_slcr" vaddr="0xff180000" perms="rw" cached="false" />
         <!-- <map mr="gpio" vaddr="0xff800000" perms="rw" cached="false" /> -->
         
         <map mr="data_region" vaddr="0x70000000" perms="rw" cached="false" />
