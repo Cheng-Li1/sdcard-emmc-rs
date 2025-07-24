@@ -392,6 +392,36 @@ fn sdhci_print_present_state_string(present_state: u32) {
     dev_log!("\n")
 }
 
+fn sdhci_print_adma2_descriptor_64(desc: &ADMA2Descriptor64) {
+    if (desc.attribute & (1 << 0)) == 0 {
+        dev_log!("invalid, ");
+    } else {
+        dev_log!("valid, ");
+    }
+
+    if (desc.attribute & (1 << 1)) != 0 {
+        dev_log!("end of descriptor, ");
+    }
+
+    if (desc.attribute & (1 << 2)) != 0 {
+        dev_log!("force to generate ADMA interrupt, ");
+    }
+
+    if (desc.attribute & (1 << 5)) == 0 && (desc.attribute & (1 << 4)) == 0 && (desc.attribute & (1 << 3)) == 0 {
+        dev_log!("no operationt, ");
+    } else if (desc.attribute & (1 << 5)) == 0 && (desc.attribute & (1 << 4)) == 1 && (desc.attribute & (1 << 3)) == 0 {
+        dev_log!("reserved, ")
+    } else if (desc.attribute & (1 << 5)) == 1 && (desc.attribute & (1 << 4)) == 0 && (desc.attribute & (1 << 3)) == 0 {
+        dev_log!("transfer data, ")
+    } else if (desc.attribute & (1 << 5)) == 1 && (desc.attribute & (1 << 4)) == 1 && (desc.attribute & (1 << 3)) == 0 {
+        dev_log!("link descriptor, ")
+    }
+
+    let length = desc.length;
+    let address = desc.address;
+    dev_log!("length: {}, address: {:#x}\n", length, address);
+}
+
 impl SdhciRegister {
     unsafe fn new(sdmmc_register_base: u64) -> &'static mut SdhciRegister {
         unsafe { &mut *(sdmmc_register_base as *mut SdhciRegister) }
@@ -751,11 +781,6 @@ impl SdhciHost {
                 + ((block_count * block_size as u32) % DESC_MAX_LENGTH == 0) as u32;
         }
 
-        dev_log!(
-            "Gonna init the descriptors, total descriptor lines: {}\n",
-            total_desc_lines
-        );
-
         let ptr = self.memory.cast::<ADMA2Descriptor64>();
         {
             let slice: &mut [ADMA2Descriptor64];
@@ -763,7 +788,7 @@ impl SdhciHost {
                 slice = &mut (*ptr::slice_from_raw_parts_mut(ptr, SDHCI_DESC_NUMBER));
             }
 
-            for i in 0..(total_desc_lines as usize) - 1 {
+            for i in 0 .. (total_desc_lines as usize) - 1 {
                 slice[i].address = buffer_pointer + (i * (DESC_MAX_LENGTH as usize)) as u64;
                 slice[i].attribute = DESC_TRAN | DESC_VALID;
                 slice[i].length = 0;
@@ -773,19 +798,12 @@ impl SdhciHost {
             slice[total_desc_lines as usize - 1].attribute = DESC_TRAN | DESC_END | DESC_VALID;
             slice[total_desc_lines as usize - 1].length = block_count as u16 * block_size;
 
-            dev_log!(
-                "address: {:#x}, attribute: {:#x}, length: {:#x}, host_ctrl_2: {:#x}\n",
-                buffer_pointer,
-                DESC_TRAN | DESC_END | DESC_VALID,
-                block_count as u16 * block_size,
-                self.register.host_control_2.get()
-            );
+            for i in 0 .. total_desc_lines as usize {
+                dev_log!("ADMA desc {}: ", i);
+                sdhci_print_adma2_descriptor_64(&slice[i]);
+            }
         }
 
-        dev_log!(
-            "adma_system_address_64: {:#x}\n",
-            self.physical_memory_addr as u32
-        );
         self.register
             .adma_system_address_64_lo
             .set(self.physical_memory_addr as u32);
