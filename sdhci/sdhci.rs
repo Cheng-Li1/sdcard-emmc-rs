@@ -152,7 +152,9 @@ register_bitfields![u16,
         DATA_END_BIT_ERROR OFFSET(6) NUMBITS(1) [],
         CURRENT_LIMIT_ERROR OFFSET(7) NUMBITS(1) [],
         AUTO_CMD_ERROR OFFSET(8) NUMBITS(1) [],
-        ADMA_ERROR OFFSET(9) NUMBITS(1) []
+        ADMA_ERROR OFFSET(9) NUMBITS(1) [],
+        TUNING_ERROR OFFSET(10) NUMBITS(1) [],
+        RESPONSE_ERROR OFFSET(11) NUMBITS(1) [],
     ]
 ];
 
@@ -686,6 +688,36 @@ fn sdhci_print_normal_interrupt_status(status: &LocalRegisterCopy<u16, NORMAL_IN
     dev_log!("\n");
 }
 
+fn sdhci_print_error_interrupt_status(status: &LocalRegisterCopy<u16, ERROR_INTERRUPT::Register>) {
+    let all_fields = &[
+        (ERROR_INTERRUPT::COMMAND_TIMEOUT_ERROR, "command_timeout_error"),
+        (ERROR_INTERRUPT::COMMAND_CRC_ERROR, "command_crc_error"),
+        (ERROR_INTERRUPT::COMMAND_END_BIT_ERROR, "command_end_bit_error"),
+        (ERROR_INTERRUPT::COMMAND_INDEX_ERROR, "command_index_error"),
+        (ERROR_INTERRUPT::DATA_TIMEOUT_ERROR, "data_timeout_error"),
+        (ERROR_INTERRUPT::DATA_CRC_ERROR, "data_crc_error"),
+        (ERROR_INTERRUPT::DATA_END_BIT_ERROR, "data_end_bit_error"),
+        (ERROR_INTERRUPT::CURRENT_LIMIT_ERROR, "current_limit_error"),
+        (ERROR_INTERRUPT::AUTO_CMD_ERROR, "auto_cmd_error"),
+        (ERROR_INTERRUPT::ADMA_ERROR, "adma_error"),
+        (ERROR_INTERRUPT::TUNING_ERROR, "tuning_error"),
+        (ERROR_INTERRUPT::RESPONSE_ERROR, "response_error"),
+    ];
+
+    dev_log!("error interrupt status: ");
+    if status.get() == u16::MAX {
+        return dev_log!("all\n");
+    } else if status.get() == 0 {
+        return dev_log!("none\n");
+    }
+    for (field, name) in all_fields.iter() {
+        if status.is_set(*field) {
+            dev_log!("{}, ", name);
+        }
+    }
+    dev_log!("\n");
+}
+
 impl SdhciRegister {
     unsafe fn new(sdmmc_register_base: u64) -> &'static mut SdhciRegister {
         unsafe { &mut *(sdmmc_register_base as *mut SdhciRegister) }
@@ -831,7 +863,7 @@ impl SdhciHost {
         assert_eq!(hc_version, 2);
 
         let host_caps = self.register.capabilities_0.get();
-        info!("host controller capabilities: {:#x}", host_caps);
+        sdhci_print_capabilities(host_caps, self.register.capabilities_1.get());
 
         if let Err(_) = self.reset_config() {
             panic!("reset failed")
@@ -975,8 +1007,8 @@ impl SdhciHost {
 
         self.register.block_count.set(blk_cnt as u16);
         dev_log!("[set] block_count: {:#x}\n", blk_cnt);
-        self.register.timeout_control.set(0);
-        dev_log!("[set] timeout_control: {:#x}\n", 0);
+        self.register.timeout_control.set(0xE);
+        dev_log!("[set] timeout_control: {:#x}\n", 0xE);
         self.register.argument.set(arg);
         dev_log!("[set] argument: {:#x}\n", arg);
 
@@ -1087,8 +1119,6 @@ impl SdhciHost {
 /// Helper methods for registers with special handling.
 impl SdmmcHardware for SdhciHost {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
-        sdhci_print_capabilities(self.register.capabilities_0.get(), self.register.capabilities_1.get());
-
         dev_log!("\n<init>\n");
         let host_caps = self.cfg_initialize();
         self.card_initialize(host_caps)?;
@@ -1210,6 +1240,7 @@ impl SdmmcHardware for SdhciHost {
             cmd.cmdarg
         );
         sdhci_print_normal_interrupt_status(&status);
+        sdhci_print_error_interrupt_status(&self.register.error_interrupt_status.extract());
 
         sdhci_print_present_state_string(self.register.present_state.get());
 

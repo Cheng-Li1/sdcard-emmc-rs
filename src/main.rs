@@ -40,6 +40,16 @@ unsafe fn print_one_block(ptr: *const u8, num: usize) {
 /// we do not need to provide a real cache invalidate function
 fn dummy_cache_invalidate_function() {}
 
+#[allow(dead_code)]
+unsafe fn set_one_block(ptr: *mut u8, num: usize) {
+    unsafe {
+        // Iterate over the number of bytes and print each one in hexadecimal format
+        for i in 0..num {
+            *ptr.add(i) = i as u8;
+        }
+    }
+}
+
 #[protection_domain(heap_size = 0x1000)]
 fn init() -> impl Handler {
     debug_println!("Driver init!");
@@ -54,6 +64,9 @@ fn init() -> impl Handler {
     let physical_memory_addr: u64 = 0x70000000;
 
     assert!((physical_memory_addr as usize).is_multiple_of(8));
+
+    unsafe { set_one_block(0x70010000 as *mut u8, 512) };
+    unsafe { print_one_block(0x70010000 as *mut u8, 512) };
 
     let hal: SdhciHost = unsafe {
         SdhciHost::new(
@@ -81,7 +94,7 @@ fn init() -> impl Handler {
     let _ = sdmmc_host.config_interrupt(false, false);
 
     // Print out one block to check if read works
-    sdmmc_host.test_read_one_block(1, 0x70010000);
+    sdmmc_host.test_read_one_block(0, 0x70010000);
 
     /*
     unsafe {
