@@ -1,0 +1,45 @@
+name: build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  Boards: odroidc4
+  Build_Config: debug
+  Platforms: seL4-Microkit
+  Arch: aarch64-sel4-microkit-minimal
+  RUST_BACKTRACE: 1
+  
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Pull dependency
+      run: |
+        wget https://github.com/seL4/microkit/releases/download/2.0.1/microkit-sdk-2.0.1-linux-x86-64.tar.gz -O sel4-microkit.tar.gz
+        tar -xf sel4-microkit.tar.gz
+        mv microkit*/ seL4-Microkit
+        echo "SEL4_INCLUDE_DIRS=$(pwd)/seL4-Microkit/board/$Boards/$Build_Config/include" >> "$GITHUB_ENV"
+    - name: Build
+      run: |
+        cargo build \
+          -Z build-std=core,alloc,compiler_builtins \
+          -Z build-std-features=compiler-builtins-mem \
+          --target support/targets/$Arch.json \
+          --verbose
+        mv target/$Arch/$Build_Config/sdmmc_driver.elf ./sdmmc_driver.elf
+      
+    # - name: Run tests
+      # run: cargo test --verbose
+    - name: Upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: sdcard-emmc-driver-${{env.Boards}}-${{env.Platforms}}
+        path: sdmmc_driver.elf
+      
