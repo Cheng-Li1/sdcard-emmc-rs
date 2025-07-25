@@ -2,14 +2,12 @@ name: build
 
 on:
   push:
-    branches: ["main"]
   pull_request:
-    branches: ["main"]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  Boards: odroidc4
+  Boards: zcu102
   Build_Config: debug
   Platforms: seL4-Microkit
   Arch: aarch64-sel4-microkit-minimal
