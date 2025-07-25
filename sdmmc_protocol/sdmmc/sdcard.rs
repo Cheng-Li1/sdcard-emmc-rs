@@ -212,7 +212,7 @@ impl Csd {
             }
             SdVersion::V2_0 => {
                 // CSD Version 2.0 capacity calculation for SDHC/SDXC
-                let c_size: u64 = ((csd_combined >> 48) & 0x3FFFF) as u64; // Bits 48–69
+                let c_size: u64 = ((csd_combined >> 48) & 0x3FFFFF) as u64; // Bits 48–69
                 let card_capacity: u64 = (c_size + 1) * 512 * 1024; // Capacity formula for SDHC/SDXC
 
                 // Erase sector size calculation for CSD Version 2.0
