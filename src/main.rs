@@ -6,6 +6,7 @@ extern crate alloc;
 mod sel4_microkit_os;
 
 use sdhci::sdhci::SdhciHost;
+use sdmmc_hal::sdhci_arasan::SdhciArasan;
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sdmmc_protocol::{
     sdmmc::SdmmcProtocol,
@@ -68,12 +69,13 @@ fn init() -> impl Handler {
     unsafe { set_one_block(0x70010000 as *mut u8, 512) };
     unsafe { print_one_block(0x70010000 as *mut u8, 512) };
 
-    let hal: SdhciHost = unsafe {
+    let hal = unsafe {
         SdhciHost::new(
             0xff170000,
             unsafe_stolen_memory,
             dummy_cache_invalidate_function,
             physical_memory_addr as u32,
+            SdhciArasan::new()
         )
     };
 

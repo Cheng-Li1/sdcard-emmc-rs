@@ -726,7 +726,7 @@ impl SdhciRegister {
     }
 }
 
-pub struct SdhciHost<T: SdhciHardware> {
+pub struct SdhciHost<H: SdhciHardware> {
     register: &'static mut SdhciRegister,
     transfer_mode: u16,
     memory: *mut [u8; SDHCI_DESC_SIZE * SDHCI_DESC_NUMBER],
@@ -734,7 +734,7 @@ pub struct SdhciHost<T: SdhciHardware> {
     physical_memory_addr: u32,
     i_tap_delay: u32,
     o_tap_delay: u32,
-    sdhci_hal: T,
+    sdhci_hal: H,
 }
 
 fn usleep(time: u64) {
@@ -742,12 +742,13 @@ fn usleep(time: u64) {
     process_wait_unreliable(time * ns_in_us);
 }
 
-impl<T: SdhciHardware> SdhciHost<T> {
+impl<H: SdhciHardware> SdhciHost<H> {
     pub unsafe fn new(
         sdmmc_register_base: u64,
         memory: *mut [u8; SDHCI_DESC_SIZE * SDHCI_DESC_NUMBER],
         cache_invalidate_function: fn(),
         physical_memory_addr: u32,
+        sdhci_hal: H,
     ) -> Self {
         let register: &'static mut SdhciRegister =
             unsafe { SdhciRegister::new(sdmmc_register_base) };
@@ -761,6 +762,7 @@ impl<T: SdhciHardware> SdhciHost<T> {
             physical_memory_addr,
             i_tap_delay: 0,
             o_tap_delay: 0,
+            sdhci_hal,
         }
     }
 
@@ -939,6 +941,8 @@ impl<T: SdhciHardware> SdhciHost<T> {
                 }
             }
         }
+
+        dev_log!("divisor: {}\n", divisor);
 
         ((divisor as u32 & CC_SDCLK_FREQ_SEL_MASK) << CC_DIV_SHIFT)
             | (((divisor as u32 >> 8) & CC_SDCLK_FREQ_SEL_EXT_MAS) << CC_EXT_DIV_SHIFT)
@@ -1120,7 +1124,7 @@ impl<T: SdhciHardware> SdhciHost<T> {
 }
 
 /// Helper methods for registers with special handling.
-impl<T: SdhciHardware>  SdmmcHardware for SdhciHost<T> {
+impl<H: SdhciHardware>  SdmmcHardware for SdhciHost<H> {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
         dev_log!("\n<init>\n");
         let host_caps = self.cfg_initialize();
