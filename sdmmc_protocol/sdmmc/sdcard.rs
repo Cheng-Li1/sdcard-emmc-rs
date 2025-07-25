@@ -22,70 +22,99 @@ pub struct Sdcard {
 impl Sdcard {
     pub fn print_info(&self) {
         const LABEL_WIDTH: usize = 20;
+        const DATA_WIDTH: usize = 25;
         let capacity_bytes = self.card_specific_data.card_capacity;
 
         const KB: u64 = 1024;
         const MB: u64 = 1024 * KB;
         const GB: u64 = 1024 * MB;
+        const TB: u64 = 1024 * GB;
 
-        info!("\n\n╔════════════════════════════════════════════════╗");
-        info!("║ SDCARD INFORMATION                           ║");
-        info!("╠════════════════════════════════════════════════╣");
+        info!("\n\n╔═════════════════════════════════════════════════╗");
+        info!("║ SDCARD INFORMATION                              ║");
+        info!("╠═════════════════════════════════════════════════╣");
         info!(
-            "║ {:<width$}: {:<25} ║", // Pad the value side as well
+            "║ {:<label_width$}: {:<data_width$} ║", // Pad the value side as well
             "Manufacturer ID",
             self.manufacture_info.manufacturer_id,
-            width = LABEL_WIDTH
+            label_width = LABEL_WIDTH,
+            data_width = DATA_WIDTH,
         );
         info!(
-            "║ {:<width$}: {:<25} ║",
+            "║ {:<label_width$}: {:<data_width$} ║",
             "OEM ID",
             self.manufacture_info.oem_id,
-            width = LABEL_WIDTH
+            label_width = LABEL_WIDTH,
+            data_width = DATA_WIDTH,
         );
         info!(
-            "║ {:<width$}: {:<25} ║",
+            "║ {:<label_width$}: {:<data_width$} ║",
             "Product Name",
             core::str::from_utf8(&self.manufacture_info.product_name).unwrap_or("?????"),
-            width = LABEL_WIDTH
+            label_width = LABEL_WIDTH,
+            data_width = DATA_WIDTH,
         );
         info!(
-            "║ {:<width$}: {:<25} ║",
+            "║ {:<label_width$}: {:<data_width$} ║",
             "Product Revision",
             self.manufacture_info.product_revision,
-            width = LABEL_WIDTH
+            label_width = LABEL_WIDTH,
+            data_width = DATA_WIDTH,
         );
         info!(
-            "║ {:<width$}: {:<25} ║",
+            "║ {:<label_width$}: {:<data_width$} ║",
             "Serial Number",
             self.manufacture_info.serial_number,
-            width = LABEL_WIDTH
+            label_width = LABEL_WIDTH,
+            data_width = DATA_WIDTH,
         );
         info!(
-            "║ {:<width$}: {:<25} ║",
+            "║ {:<label_width$}: {:<data_width$}{:padding$} ║",
             "Manufacturing Date",
             &format_args!(
-                "{}-{}",
+                "{:4}-{:02}",
                 self.manufacture_info.manufacturing_date.0,
                 self.manufacture_info.manufacturing_date.1
             ),
-            width = LABEL_WIDTH
+            "",
+            label_width = LABEL_WIDTH,
+            data_width = DATA_WIDTH,
+            padding = DATA_WIDTH - 7
         );
 
-        let (val, unit) = match capacity_bytes {
-            c if c >= GB => (c / GB, "GB"),
-            c if c >= MB => (c / MB, "MB"),
-            c if c >= KB => (c / KB, "KB"),
-            c => (c, "Bytes"),
+        let (val, fraction, unit) = match capacity_bytes {
+            c if c >= TB => (c / TB, (c % TB) / GB, "TB"),
+            c if c >= GB => (c / GB, (c % GB) / MB, "GB"),
+            c if c >= MB => (c / MB, (c % MB) / KB, "MB"),
+            c if c >= KB => (c / KB, c % KB, "KB"),
+            c => (c, 0, "Bytes"),
         };
-        info!(
-            "║ {:<width$}: {:<25} ║",
-            "Card Capacity",
-            &format_args!("{} {} ({} bytes)", val, unit, capacity_bytes),
-            width = LABEL_WIDTH
-        );
+        if fraction == 0 {
+            info!(
+                "║ {:<label_width$}: {:<data_width$} ║",
+                "Card Capacity",
+                &format_args!(
+                    "{} {}{:padding$}",
+                    val,
+                    unit,
+                    "",
+                    padding = DATA_WIDTH - 4 - val.ilog10() as usize
+                ),
+                label_width = LABEL_WIDTH,
+                data_width = DATA_WIDTH
+            );
+        } else {
+            info!(
+                "║ {:<label_width$}: {}{:padding$} ║",
+                "Card Capacity",
+                &format_args!("{}.{:0<3} {}", val, (fraction * 1000) / 1024, unit),
+                "",
+                label_width = LABEL_WIDTH,
+                padding = DATA_WIDTH - val.ilog10() as usize - 8
+            );
+        }
 
-        info!("╚════════════════════════════════════════════════╝\n");
+        info!("╚═════════════════════════════════════════════════╝\n");
     }
 
     pub fn sdcard_info(&self) -> CardInfo {
@@ -152,7 +181,7 @@ impl Cid {
         let serial_number: u32 = ((cid_combined >> 24) & 0xFFFFFFFF) as u32;
 
         // Extract year and month from the manufacturing date
-        let year: u32 = ((cid_combined >> 12) & 0x0F) as u32 + 2000;
+        let year: u32 = ((cid_combined >> 12) & 0xFF) as u32 + 2000;
         let month: u8 = ((cid_combined >> 8) & 0x0F) as u8;
 
         Cid {
