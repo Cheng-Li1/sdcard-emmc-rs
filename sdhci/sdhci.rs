@@ -20,6 +20,8 @@ use tock_registers::interfaces::{Readable, Writeable};
 use tock_registers::registers::{ReadOnly, ReadWrite, WriteOnly};
 use tock_registers::{register_bitfields, LocalRegisterCopy, RegisterLongName, UIntLike};
 
+use crate::sdhci_trait::SdhciHardware;
+
 const IRQ_ENABLE_MASK: u16 = 0xFFFF;
 const ERR_ENABLE_MASK: u16 = 0xFFFF;
 
@@ -724,7 +726,7 @@ impl SdhciRegister {
     }
 }
 
-pub struct SdhciHost {
+pub struct SdhciHost<T: SdhciHardware> {
     register: &'static mut SdhciRegister,
     transfer_mode: u16,
     memory: *mut [u8; SDHCI_DESC_SIZE * SDHCI_DESC_NUMBER],
@@ -732,6 +734,7 @@ pub struct SdhciHost {
     physical_memory_addr: u32,
     i_tap_delay: u32,
     o_tap_delay: u32,
+    sdhci_hal: T,
 }
 
 fn usleep(time: u64) {
@@ -739,7 +742,7 @@ fn usleep(time: u64) {
     process_wait_unreliable(time * ns_in_us);
 }
 
-impl SdhciHost {
+impl<T: SdhciHardware> SdhciHost<T> {
     pub unsafe fn new(
         sdmmc_register_base: u64,
         memory: *mut [u8; SDHCI_DESC_SIZE * SDHCI_DESC_NUMBER],
@@ -1117,7 +1120,7 @@ impl SdhciHost {
 }
 
 /// Helper methods for registers with special handling.
-impl SdmmcHardware for SdhciHost {
+impl<T: SdhciHardware>  SdmmcHardware for SdhciHost<T> {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
         dev_log!("\n<init>\n");
         let host_caps = self.cfg_initialize();
