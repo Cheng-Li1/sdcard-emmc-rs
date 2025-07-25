@@ -1295,22 +1295,27 @@ impl<H: SdhciHardware>  SdmmcHardware for SdhciHost<H> {
         dev_log!("[set] normal_interrupt_status: ");
         sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(INTR_CC_MASK));
 
-        let [rsp0, rsp1, rsp2, rsp3] = response;
         if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_136 != 0 {
-            *rsp0 = self.register.response[3].get();
-            *rsp1 = self.register.response[2].get();
-            *rsp2 = self.register.response[1].get();
-            *rsp3 = self.register.response[0].get();
+            // SDHCI_QUIRK2_RSP_136_HAS_CRC
+            for i in 0 .. 4 {
+                response[i] = self.register.response[3 - i].get();
+            }
+            for i in 0 .. 4 {
+                response[i] <<= 8;
+                if i != 3 {
+                    response[i] |= response[i + 1] >> 24;
+                }
+            }
             dev_log!(
                 "response: [{:#x}, {:#x}, {:#x}, {:#x}]\n",
-                *rsp0,
-                *rsp1,
-                *rsp2,
-                *rsp3
+                response[0],
+                response[1],
+                response[2],
+                response[3]
             );
         } else {
-            *rsp0 = self.register.response[0].get();
-            dev_log!("response: [{:#x}]\n", *rsp0,);
+            response[0] = self.register.response[0].get();
+            dev_log!("response: [{:#x}]\n", response[0]);
         }
 
         Ok(())
