@@ -307,6 +307,10 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         })
     }
 
+    pub fn get_hal(&mut self) -> &mut T {
+        &mut self.hardware
+    }
+
     fn sdcard_init(&mut self, voltage_switch: bool) -> Result<(), SdmmcError> {
         let mut resp: [u32; 4] = [0; 4];
 

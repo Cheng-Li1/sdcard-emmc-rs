@@ -18,7 +18,6 @@ use crate::sel4_microkit_os::TimerOps;
 use crate::sel4_microkit_os::{SerialOps, odroidc4::Odroidc4VoltageSwitch};
 
 const TIMER: TimerOps = TimerOps::new();
-const VOLTAGE: Odroidc4VoltageSwitch = Odroidc4VoltageSwitch::new();
 const SERIAL: SerialOps = SerialOps::new();
 
 // Debug function for printing out content in one block
@@ -90,6 +89,14 @@ fn init() -> impl Handler {
         .setup_card()
         .unwrap_or_else(|error| panic!("SDMMC: Error at setup {:?}", error));
 
+    let unsafe_stolen_memory2 = 0x70019000;
+    if let Err(_) = sdmmc_host.get_hal().read_one_block_no_dma(0, unsafe_stolen_memory2) {
+        panic!("SDMMC: read_one_block_no_dma failed");
+    }
+    unsafe {
+        print_one_block(unsafe_stolen_memory2 as *const u8, 512);
+    }
+
     // Print the card info after the init process
     sdmmc_host.print_card_info();
 
@@ -97,6 +104,8 @@ fn init() -> impl Handler {
 
     // Print out one block to check if read works
     sdmmc_host.test_read_one_block(0, 0x70010000);
+
+    todo!();
 
     /*
     unsafe {
