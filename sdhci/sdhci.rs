@@ -6,6 +6,7 @@
 #![allow(dead_code)] // Allow unused fields, as a driver may not use all registers.
 
 use core::ptr;
+use sdmmc_protocol::dev_log;
 use sdmmc_protocol::sdmmc::mmc_struct::{MmcBusWidth, MmcTiming};
 use sdmmc_protocol::sdmmc::sdmmc_capability::{MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34};
 use sdmmc_protocol::sdmmc::{
@@ -15,71 +16,22 @@ use sdmmc_protocol::sdmmc::{
 };
 use sdmmc_protocol::sdmmc_os::process_wait_unreliable;
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
-use sdmmc_protocol::{dev_log, info};
+use tock_registers::fields::FieldValue;
 use tock_registers::interfaces::{Readable, Writeable};
 use tock_registers::registers::{ReadOnly, ReadWrite, WriteOnly};
 use tock_registers::{LocalRegisterCopy, RegisterLongName, UIntLike, register_bitfields};
 
 use crate::sdhci_trait::SdhciHardware;
 
-const IRQ_ENABLE_MASK: u16 = 0xFFFF;
-const ERR_ENABLE_MASK: u16 = 0xFFFF;
-
-const HC_SPEC_VER_MASK: u16 = 0xFF;
-
-const PC_BUS_VSEL_1V8_MASK: u8 = 0x0000000A;
-const PC_BUS_VSEL_3V0_MASK: u8 = 0x0000000C;
-const PC_BUS_VSEL_3V3_MASK: u8 = 0x0000000E;
-const PC_BUS_PWR_MASK: u8 = 0x00000001;
-const PC_EMMC_HW_RST_MASK: u8 = 0x00000010;
-
 const INPUT_CLOCK_HZ: u32 = 187481262;
-
-const CC_EXT_MAX_DIV_CNT: u16 = 2046;
-const CC_SDCLK_FREQ_SEL_MASK: u32 = 0x000000FF;
-const CC_DIV_SHIFT: u32 = 8;
-const CC_SDCLK_FREQ_SEL_EXT_MAS: u32 = 0x00000003;
-const CC_EXT_DIV_SHIFT: u32 = 6;
-const CC_INT_CLK_EN_MASK: u16 = 0x00000001;
-const CC_SD_CLK_EN_MASK: u16 = 0x00000004;
-const CC_INT_CLK_STABLE_MASK: u16 = 0x00000002;
 
 const INIT_DELAY: u64 = 10000;
 
 const CLK_400_KHZ: u32 = 400000;
 
-const PSR_CARD_INSRT_MASK: u32 = 0x00010000;
-const PSR_INIHIBIT_CMD_MASK: u32 = 0x00000001;
-const PSR_INHIBIT_DAT_MASK: u32 = 0x00000002;
-
-const NORM_INTR_ALL_MASK: u16 = 0x0000FFFF;
-const ERROR_INTR_ALL_MASK: u16 = 0x0000F3FF;
-
-const SWRST_ALL_MASK: u8 = 0x00000001;
-const SWRST_CMD_LINE_MASK: u8 = 0x00000002;
-
 const CAP_VOLT_3V3_MASK: u32 = 0x01000000;
 const CAP_VOLT_3V0_MASK: u32 = 0x02000000;
 const CAP_VOLT_1V8_MASK: u32 = 0x04000000;
-
-const HC_DMA_ADMA2_64_MASK: u8 = 0x00000018;
-
-const INTR_CARD_MASK: u16 = 0x00000100;
-
-const BLK_SIZE_512_MASK: u16 = 0x200;
-
-const TM_DMA_EN_MASK: u16 = 0x00000001;
-const TM_BLK_CNT_EN_MASK: u16 = 0x00000002;
-const TM_DAT_DIR_SEL_MASK: u16 = 0x00000010;
-
-const INTR_CC_MASK: u16 = 0x00000001;
-const INTR_TC_MASK: u16 = 0x00000002;
-const INTR_BRR_MASK: u16 = 0x00000020;
-const INTR_ERR_MASK: u16 = 0x00008000;
-
-const INTR_ERR_CT_MASK: u16 = 0x00000001;
-
-const BLK_SIZE_MASK: u16 = 0x00000FFF;
 
 const DESC_MAX_LENGTH: u32 = 65536;
 const DESC_TRAN: u16 = 2 << 4;
@@ -106,45 +58,276 @@ const SDHCI_DESC_SIZE: usize = [
 ][(size_of::<ADMA2Descriptor32>() < size_of::<ADMA2Descriptor64>()) as usize];
 const SDHCI_DESC_NUMBER: usize = 32;
 
-//--------------------------------------------------------------------------------------------------
-// Bitfield Definitions (These are unchanged from the previous method)
-//--------------------------------------------------------------------------------------------------
-
 register_bitfields![u32,
     PRESENT_STATE [
-        COMMAND_INHIBIT_CMD OFFSET(0) NUMBITS(1) [],
-        COMMAND_INHIBIT_DAT OFFSET(1) NUMBITS(1) [],
-        DATA_LINE_ACTIVE OFFSET(2) NUMBITS(1) [],
-        WRITE_TRANSFER_ACTIVE OFFSET(8) NUMBITS(1) [],
-        READ_TRANSFER_ACTIVE OFFSET(9) NUMBITS(1) [],
-        BUFFER_WRITE_ENABLE OFFSET(10) NUMBITS(1) [],
-        BUFFER_READ_ENABLE OFFSET(11) NUMBITS(1) [],
-        CARD_INSERTED OFFSET(16) NUMBITS(1) [],
-        CARD_STATE_STABLE OFFSET(17) NUMBITS(1) [],
-        CARD_DETECT_PIN_LEVEL OFFSET(18) NUMBITS(1) [],
-        WRITE_PROTECT_SWITCH_PIN_LEVEL OFFSET(19) NUMBITS(1) []
-    ]
+        COMMAND_INHIBIT_CMD OFFSET(0) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        COMMAND_INHIBIT_DAT OFFSET(1) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        DATA_LINE_ACTIVE OFFSET(2) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        WRITE_TRANSFER_ACTIVE OFFSET(8) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        READ_TRANSFER_ACTIVE OFFSET(9) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        BUFFER_WRITE_ENABLE OFFSET(10) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        BUFFER_READ_ENABLE OFFSET(11) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        CARD_INSERTED OFFSET(16) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        CARD_STATE_STABLE OFFSET(17) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        CARD_DETECT_PIN_LEVEL OFFSET(18) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        DAT_LINE_SIGNAL_LEVEL_LO OFFSET(20) NUMBITS(4) [],
+        CMD_LINE_SIGNAL_LEVEL OFFSET(24) NUMBITS(1) [],
+    ],
+    CAPABILITIES_LO [
+        TIMEOUT_CLOCK_FREQUENCY OFFSET(0) NUMBITS(6) [
+            Unknown = 0,
+        ],
+        TIMEOUT_CLOCK_UNIT OFFSET(7) NUMBITS(1) [
+            KHz = 0,
+            MHz = 1,
+        ],
+        BASE_CLOCK_FREQUENCY OFFSET(8) NUMBITS(8) [
+            Unknown = 0,
+        ],
+        MAX_BLOCK_LENGTH OFFSET(16) NUMBITS(2) [
+            L512 = 0,
+            L1024 = 1,
+            L2048 = 2,
+            Reserved = 3,
+        ],
+        ADMA2_SUPPORT OFFSET(19) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        HIGH_SPEED_SUPPORT OFFSET(21) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        SDMA_SUPPORT OFFSET(22) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        SUSPEND_RESUME_SUPPORT OFFSET(23) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        VOLTAGE_SUPPORT_V3_3 OFFSET(24) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        VOLTAGE_SUPPORT_V3_0 OFFSET(25) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        VOLTAGE_SUPPORT_V1_8 OFFSET(26) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        SYS_ADDR_64_SUPPORT_V4 OFFSET(27) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        SYS_ADDR_64_SUPPORT_V3 OFFSET(28) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        ASYNC_INTERRUPT_SUPPORT OFFSET(29) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        SLOT_TYPE OFFSET(30) NUMBITS(2) [
+            Removable = 0,
+            Embedded = 1,
+            SharedBus = 2,
+        ],
+    ],
+    CAPABILITIES_HI [
+        SDR50_SUPPORT OFFSET(0) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        SDR104_SUPPORT OFFSET(1) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        DDR50_SUPPORT OFFSET(2) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        UHSII_SUPPORT OFFSET(3) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        Type_A_SUPPORT OFFSET(4) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        Type_C_SUPPORT OFFSET(5) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        Type_D_SUPPORT OFFSET(6) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+        TIMER_COUNT_FOR_RE_TUNING OFFSET(8) NUMBITS(4) [
+        ],
+        USE_TUNING_FOR_SDR50 OFFSET(13) NUMBITS(1) [
+            NotRequired = 0,
+            Required = 1,
+        ],
+        RE_TUNING_MODES OFFSET(14) NUMBITS(2) [
+            /// Timer
+            Mode1 = 0,
+            /// Timer and Re-Tuning Request
+            Mode2 = 1,
+            /// Auto Re-Tuning (for transfer) Timer and Re-Tuning Request
+            Mode3 = 2,
+        ],
+        CLOCK_MULTIPLIER OFFSET(16) NUMBITS(8) [
+            NotSupported = 0,
+        ],
+        ADMA3_SUPPORT OFFSET(27) NUMBITS(1) [
+            NotSupported = 0,
+            Supported = 1,
+        ],
+    ],
 ];
+
 register_bitfields![u16,
+    BLOCK_SIZE [
+        TRANSFER_BLOCK_SIZE OFFSET(0) NUMBITS(12) [
+            Size512 = 512
+        ]
+    ],
+    TRANSFER_MODE [
+        DMA_ENABLE OFFSET(0) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        BLOCK_COUNT_ENABLE OFFSET(1) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        DATA_TRANSFER_DIRECTION OFFSET(4) NUMBITS(1) [
+            Write = 0,
+            Read = 1,
+        ],
+        MULTI_BLOCK_SELECT OFFSET(5) NUMBITS(1) [
+            Single = 0,
+            Multi = 1,
+        ]
+    ],
+    COMMAND [
+        RESPONSE_TYPE OFFSET(0) NUMBITS(2) [
+            NoResponse = 0,
+            Response136 = 1,
+            Response48 = 2,
+            Response48Busy = 3,
+        ],
+        CRC_CHECK OFFSET(3) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        INDEX_CHECK OFFSET(4) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        DATA_PRESENT OFFSET(5) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        TYPE OFFSET(6) NUMBITS(2) [
+            Normal = 0,
+            Suspend = 1,
+            Resume = 2,
+            Abort = 3,
+        ],
+        INDEX OFFSET(8) NUMBITS(6) []
+    ],
+    CLOCK_CONTROL [
+        INTERNAL_CLOCK_ENABLE OFFSET(0) NUMBITS(1) [
+            Stop = 0,
+            Oscillate = 1,
+        ],
+        INTERNAL_CLOCK_STABLE OFFSET(1) NUMBITS(1) [
+            NotReady = 0,
+            Ready = 1,
+        ],
+        SD_CLOCK_ENABLE OFFSET(2) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        PLL_ENABLE OFFSET(3) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        CLOCK_GENERATOR_SELECT OFFSET(5) NUMBITS(1) [
+            Divided = 0,
+            Programmable = 1,
+        ],
+        SDCLK_FREQUENCY_SELECT_HI OFFSET(6) NUMBITS(2) [],
+        SDCLK_FREQUENCY_SELECT_LO OFFSET(8) NUMBITS(8) [],
+    ],
     NORMAL_INTERRUPT [
-        COMMAND_COMPLETE OFFSET(0) NUMBITS(1) [],
-        TRANSFER_COMPLETE OFFSET(1) NUMBITS(1) [],
-        BLOCK_GAP_EVENT OFFSET(2) NUMBITS(1) [],
-        DMA_INTERRUPT OFFSET(3) NUMBITS(1) [],
-        BUFFER_WRITE_READY OFFSET(4) NUMBITS(1) [],
-        BUFFER_READ_READY OFFSET(5) NUMBITS(1) [],
-        CARD_INSERTION OFFSET(6) NUMBITS(1) [],
-        CARD_REMOVAL OFFSET(7) NUMBITS(1) [],
-        CARD_INTERRUPT OFFSET(8) NUMBITS(1) [],
-        INT_A OFFSET(9) NUMBITS(1) [],
-        INT_B OFFSET(10) NUMBITS(1) [],
-        INT_C OFFSET(11) NUMBITS(1) [],
-        RE_TUNING OFFSET(12) NUMBITS(1) [],
+        ENABLE OFFSET(0) NUMBITS(16) [
+            None = 0,
+            All = 0xFF,
+        ],
+        COMMAND_COMPLETE OFFSET(0) NUMBITS(1) [
+        ],
+        TRANSFER_COMPLETE OFFSET(1) NUMBITS(1) [
+        ],
+        BLOCK_GAP_EVENT OFFSET(2) NUMBITS(1) [
+        ],
+        DMA_INTERRUPT OFFSET(3) NUMBITS(1) [
+        ],
+        BUFFER_WRITE_READY OFFSET(4) NUMBITS(1) [
+        ],
+        BUFFER_READ_READY OFFSET(5) NUMBITS(1) [
+        ],
+        CARD_INSERTION OFFSET(6) NUMBITS(1) [
+        ],
+        CARD_REMOVAL OFFSET(7) NUMBITS(1) [
+        ],
+        CARD_INTERRUPT OFFSET(8) NUMBITS(1) [
+        ],
+        RE_TUNING OFFSET(12) NUMBITS(1) [
+        ],
         FX OFFSET(13) NUMBITS(1) [],
-        RESEREVED OFFSET(14) NUMBITS(1) [],
-        ERROR_INTERRUPT OFFSET(15) NUMBITS(1) []
+        ERROR_INTERRUPT OFFSET(15) NUMBITS(1) [
+        ],
     ],
     ERROR_INTERRUPT [
+        ENABLE OFFSET(0) NUMBITS(16) [
+            None = 0,
+            All = 0xF7FF,
+        ],
         COMMAND_TIMEOUT_ERROR OFFSET(0) NUMBITS(1) [],
         COMMAND_CRC_ERROR OFFSET(1) NUMBITS(1) [],
         COMMAND_END_BIT_ERROR OFFSET(2) NUMBITS(1) [],
@@ -157,43 +340,135 @@ register_bitfields![u16,
         ADMA_ERROR OFFSET(9) NUMBITS(1) [],
         TUNING_ERROR OFFSET(10) NUMBITS(1) [],
         RESPONSE_ERROR OFFSET(11) NUMBITS(1) [],
-    ]
+    ],
+    HOST_CONTROL_2 [
+        /// requires "1.8V Signaling Enable"
+        UHS_MODE_SELECT OFFSET(0) NUMBITS(3) [
+            SDR12 = 0,
+            SDR25 = 1,
+            SDR50 = 2,
+            SDR104 = 3,
+            DDR50 = 4,
+            // UHSII = 7,
+        ],
+        V1_8_SIGNALIING_ENABLE OFFSET(3) NUMBITS(1) [
+            /// 3.3V signaling
+            Off = 0,
+            On = 1,
+        ],
+        DRIVER_STRENGTH_SELECT OFFSET(4) NUMBITS(2) [
+            Type_B = 0,
+            Type_A = 1,
+            Type_C = 2,
+            Type_D = 3,
+        ],
+        EXECUTE_TUNING OFFSET(6) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        SAMPLING_CLOCK_SELECT OFFSET(7) NUMBITS(1) [
+            FixedClock = 0,
+            TunedClock = 1,
+        ],
+        HOST_VERSION_4_ENABLE OFFSET(12) NUMBITS(1) [
+            /// version 3.00 compatible mode
+            Off = 0,
+            On = 1,
+        ],
+        ASYNC_INTERRUPT_ENABLE OFFSET(14) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        PRESET_VALUE_ENABLE OFFSET(15) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+    ],
+    PRESET_VALUE [
+        SDCLK_FREQUENCY_SELECT_VALUE OFFSET(0) NUMBITS(10) [],
+        CLOCK_GENERATOR_SELECT_VALUE OFFSET(10) NUMBITS(1) [
+            HC_V2_COMPATIBLE = 0,
+            PROGRAMMABLE = 1,
+        ],
+        DRIVER_STRENGTH_SELECT_VALUE OFFSET(14) NUMBITS(2) [
+            Type_B = 0,
+            Type_A = 1,
+            Type_C = 2,
+            Type_D = 3,
+        ],
+    ],
+    HOST_CONTROLLER_VERSION [
+        SPECIFICATION_VERSION OFFSET(0) NUMBITS(8) [
+            V1_00 = 0,
+            V2_00 = 1,
+            V3_00 = 2,
+            V4_00 = 3,
+            V4_10 = 4,
+            V4_20 = 5,
+        ],
+        VENDOR_VERSION_NUMBER OFFSET(8) NUMBITS(8) [],
+    ],
 ];
 
 register_bitfields![u8,
+    HOST_CONTROL_1 [
+        LED_CONTROL OFFSET(0) NUMBITS(1) [
+            Off = 0,
+            On = 1,
+        ],
+        DATA_TRANSFER_WIDTH OFFSET(1) NUMBITS(1) [
+            Bits1 = 0,
+            Bits4 = 1,
+        ],
+        HIGH_SPEED_ENABLE OFFSET(2) NUMBITS(1) [
+            /// normal speed mode
+            Off = 0,
+            On = 1,
+        ],
+        DMA_SELECT OFFSET(3) NUMBITS(2) [
+            SDMA = 0,
+            ADMA2_32bit = 2,
+            /// requires "64-bit System Address Support for V3" in the Capabilities register
+            ADMA2_64bit = 3,
+        ],
+    ],
+    TIMEOUT_CONTROL [
+        /// TMCLK * (2 ^ Counter)
+        DATA_TIMEOUT_COUNTER OFFSET(0) NUMBITS(4) [
+            Min = 0b0000,
+            Max = 0b1110,
+        ]
+    ],
     POWER_CONTROL [
-        SD_BUS_POWER OFFSET(0) NUMBITS(1) [ Off = 0, On = 1 ],
-        SD_BUS_VOLTAGE_SELECT OFFSET(1) NUMBITS(3) [ V3_3 = 0b111, V3_0 = 0b110, V1_8 = 0b101 ]
+        SD_BUS_POWER_FOR_VDD1 OFFSET(0) NUMBITS(1) [ Off = 0, On = 1 ],
+        SD_BUS_VOLTAGE_SELECT_FOR_VDD1 OFFSET(1) NUMBITS(3) [ V1_8 = 0b101, V3_0 = 0b110, V3_3 = 0b111 ]
     ],
     SOFTWARE_RESET [
-        RESET_ALL OFFSET(0) NUMBITS(1) [],
-        RESET_CMD_LINE OFFSET(1) NUMBITS(1) [],
-        RESET_DAT_LINE OFFSET(2) NUMBITS(1) []
+        ALL OFFSET(0) NUMBITS(1) [Off = 0, On = 1],
+        CMD_LINE OFFSET(1) NUMBITS(1) [Off = 0, On = 1],
+        DAT_LINE OFFSET(2) NUMBITS(1) [Off = 0, On = 1],
     ]
 ];
 
-//--------------------------------------------------------------------------------------------------
-// Register Block Definition using register_structs!
-//--------------------------------------------------------------------------------------------------
-
 tock_registers::register_structs! {
-    /// SD Host Controller Register Map
+    /// SD Host Controller Register Map, assumes host version 3.00 compatible mode without UHS-II
     pub SdhciRegister {
         (0x000 => sdma_system_address: ReadWrite<u32>),
-        (0x004 => block_size: ReadWrite<u16>),
-        (0x006 => block_count: ReadWrite<u16>),
+        /// can be accessed only if no transaction is executing
+        (0x004 => block_size: ReadWrite<u16, BLOCK_SIZE::Register>),
+        (0x006 => block_count_16: ReadWrite<u16>),
         (0x008 => argument: ReadWrite<u32>),
-        (0x00C => transfer_mode: ReadWrite<u16>),
-        (0x00E => command: WriteOnly<u16>),
+        (0x00C => transfer_mode: ReadWrite<u16, TRANSFER_MODE::Register>),
+        (0x00E => command: WriteOnly<u16, COMMAND::Register>),
         (0x010 => response: [ReadOnly<u32>; 4]),
         (0x020 => buffer_data_port: ReadWrite<u32>),
         (0x024 => present_state: ReadOnly<u32, PRESENT_STATE::Register>),
-        (0x028 => host_control_1: ReadWrite<u8>),
+        (0x028 => host_control_1: ReadWrite<u8, HOST_CONTROL_1::Register>),
         (0x029 => power_control: ReadWrite<u8, POWER_CONTROL::Register>),
         (0x02A => block_gap_control: ReadWrite<u8>),
         (0x02B => wakeup_control: ReadWrite<u8>),
-        (0x02C => clock_control: ReadWrite<u16>),
-        (0x02E => timeout_control: ReadWrite<u8>),
+        (0x02C => clock_control: ReadWrite<u16, CLOCK_CONTROL::Register>),
+        (0x02E => timeout_control: ReadWrite<u8, TIMEOUT_CONTROL::Register>),
         (0x02F => software_reset: ReadWrite<u8, SOFTWARE_RESET::Register>),
         (0x030 => normal_interrupt_status: ReadWrite<u16, NORMAL_INTERRUPT::Register>),
         (0x032 => error_interrupt_status: ReadWrite<u16, ERROR_INTERRUPT::Register>),
@@ -202,49 +477,31 @@ tock_registers::register_structs! {
         (0x038 => normal_interrupt_signal_enable: ReadWrite<u16, NORMAL_INTERRUPT::Register>),
         (0x03A => error_interrupt_signal_enable: ReadWrite<u16, ERROR_INTERRUPT::Register>),
         (0x03C => auto_cmd_error_status: ReadOnly<u16>),
-        (0x03E => host_control_2: ReadWrite<u16>),
-        (0x040 => capabilities_0: ReadOnly<u32>),
-        (0x044 => capabilities_1: ReadOnly<u32>),
-        (0x048 => maximum_current_capabilities: ReadOnly<u32>),
-        (0x04C => _reserved0),
+        (0x03E => host_control_2: ReadWrite<u16, HOST_CONTROL_2::Register>),
+        (0x040 => capabilities_lo: ReadOnly<u32, CAPABILITIES_LO::Register>),
+        (0x044 => capabilities_hi: ReadOnly<u32, CAPABILITIES_HI::Register>),
+        (0x048 => maximum_current_capabilities_lo: ReadOnly<u32>),
+        (0x04C => maximum_current_capabilities_hi: ReadOnly<u32>),
         (0x050 => force_event_for_auto_cmd_error: WriteOnly<u16>),
-        (0x052 => force_event_for_error_interrupt: WriteOnly<u16>),
+        (0x052 => force_event_for_error_interrupt: WriteOnly<u16, ERROR_INTERRUPT::Register>),
         (0x054 => adma_error_status: ReadOnly<u8>),
-        (0x055 => _reserved1),
+        (0x055 => _reserved0),
         (0x058 => adma_system_address_64_lo: ReadWrite<u32>),
         (0x05C => adma_system_address_64_hi: ReadWrite<u32>),
-        (0x060 => preset_value: [ReadOnly<u16>; 8]),
-        (0x070 => _reserved2),
+        (0x060 => preset_value_init: ReadOnly<u16, PRESET_VALUE::Register>),
+        (0x062 => preset_value_default: ReadOnly<u16, PRESET_VALUE::Register>),
+        (0x064 => preset_value_high_speed: ReadOnly<u16, PRESET_VALUE::Register>),
+        (0x066 => preset_value_sdr12: ReadOnly<u16, PRESET_VALUE::Register>),
+        (0x068 => preset_value_sdr25: ReadOnly<u16, PRESET_VALUE::Register>),
+        (0x06A => preset_value_sdr50: ReadOnly<u16, PRESET_VALUE::Register>),
+        (0x06C => preset_value_sdr104: ReadOnly<u16, PRESET_VALUE::Register>),
+        (0x06E => preset_value_ddr50: ReadOnly<u16, PRESET_VALUE::Register>),
+        (0x070 => _preset_value_reserved),
         (0x078 => adma3_id_address_64_hi: ReadWrite<u32>),
         (0x07C => adma3_id_address_64_lo: ReadWrite<u32>),
-        (0x080 => uhs2_block_size: ReadOnly<u16>),
-        (0x082 => uhs2_block_count: ReadOnly<u16>),
-        (0x084 => _reserved3),
-        (0x088 => uhs2_command_packet: [WriteOnly<u8>; 20]),
-        (0x09C => uhs2_transfer_mode: WriteOnly<u16>),
-        (0x09E => _reserved4),
-        (0x0A0 => uhs2_response_packet: [ReadOnly<u8>; 20]),
-        (0x0B4 => _reserved5),
-        // Note: UHS-II MSG is non-contiguous, so we define its parts separately
-        // and provide a helper method to combine them.
-        (0x0B6 => uhs2_msg_hi: ReadOnly<u16>),
-        (0x0B8 => _reserved6),
-        (0x0BA => uhs2_msg_lo: ReadOnly<u16>),
-        (0x0BC => uhs2_device_select: ReadWrite<u16>),
-        (0x0BE => uhs2_dev_int_code: ReadOnly<u16>),
-        (0x0C0 => uhs2_timer_control: ReadWrite<u16>),
-        (0x0C2 => uhs2_software_reset: WriteOnly<u16>),
-        (0x0C4 => uhs2_error_interrupt_status: ReadWrite<u32>),
-        (0x0C8 => uhs2_error_interrupt_status_enable: ReadWrite<u32>),
-        (0x0CC => uhs2_error_interrupt_signal_enable: ReadWrite<u32>),
-        (0x0D0 => _reserved7),
-        (0x0E0 => pointer_for_uhs2_host_capabilities: ReadOnly<u32>),
-        (0x0E4 => pointer_for_uhs2_test: ReadWrite<u32>),
-        (0x0E8 => pointer_for_vendor_specific_area: ReadWrite<u32>),
-        (0x0EC => pointer_for_embedded_control: ReadWrite<u32>),
-        (0x0F0 => _reserved8),
+        (0x080 => _uhs2_registers),
         (0x0FC => slot_interrupt_status: ReadOnly<u16>),
-        (0x0FE => host_controller_version: ReadOnly<u16>),
+        (0x0FE => host_controller_version: ReadOnly<u16, HOST_CONTROLLER_VERSION::Register>),
         (0x100 => @END),
     }
 }
@@ -680,9 +937,7 @@ fn sdhci_print_host_control(host_control_1: u8) {
     dev_log!("\n");
 }
 
-fn sdhci_print_normal_interrupt_status(
-    status: &LocalRegisterCopy<u16, NORMAL_INTERRUPT::Register>,
-) {
+fn sdhci_print_normal_interrupt_status(status: u16) {
     let all_fields = &[
         (NORMAL_INTERRUPT::COMMAND_COMPLETE, "command_complete"),
         (NORMAL_INTERRUPT::TRANSFER_COMPLETE, "transfer_complete"),
@@ -693,23 +948,19 @@ fn sdhci_print_normal_interrupt_status(
         (NORMAL_INTERRUPT::CARD_INSERTION, "card_insertion"),
         (NORMAL_INTERRUPT::CARD_REMOVAL, "card_removal"),
         (NORMAL_INTERRUPT::CARD_INTERRUPT, "card_interrupt"),
-        (NORMAL_INTERRUPT::INT_A, "int_a (embedded)"),
-        (NORMAL_INTERRUPT::INT_B, "int_b (embedded)"),
-        (NORMAL_INTERRUPT::INT_C, "int_c (embedded)"),
         (NORMAL_INTERRUPT::RE_TUNING, "re-tuning"),
         (NORMAL_INTERRUPT::FX, "FX"),
-        (NORMAL_INTERRUPT::RESEREVED, "reserved"),
         (NORMAL_INTERRUPT::ERROR_INTERRUPT, "error_interrupt"),
     ];
 
     dev_log!("status: ");
-    if status.get() == u16::MAX {
+    if status == u16::MAX {
         return dev_log!("all\n");
-    } else if status.get() == 0 {
+    } else if status == 0 {
         return dev_log!("none\n");
     }
     for (field, name) in all_fields.iter() {
-        if status.is_set(*field) {
+        if (status & field.val(1).value) != 0 {
             dev_log!("{}, ", name);
         }
     }
@@ -760,7 +1011,6 @@ impl SdhciRegister {
 
 pub struct SdhciHost<H: SdhciHardware> {
     register: &'static mut SdhciRegister,
-    transfer_mode: u16,
     memory: *mut [u8; SDHCI_DESC_SIZE * SDHCI_DESC_NUMBER],
     cache_invalidate_function: fn(),
     physical_memory_addr: u32,
@@ -788,7 +1038,6 @@ impl<H: SdhciHardware> SdhciHost<H> {
         // TODO: Call reset function here
         SdhciHost {
             register,
-            transfer_mode: 0,
             memory,
             cache_invalidate_function,
             physical_memory_addr,
@@ -820,111 +1069,109 @@ impl<H: SdhciHardware> SdhciHost<H> {
     }
 
     fn disable_bus_power(&self) {
-        self.register.power_control.set(PC_EMMC_HW_RST_MASK);
-        dev_log!("[set] power_control: {:#x}\n", PC_EMMC_HW_RST_MASK);
+        let power_control = POWER_CONTROL::SD_BUS_POWER_FOR_VDD1::Off;
+        self.register.power_control.write(power_control);
+        dev_log!("[set] power_control: {:#x}\n", power_control.value);
         usleep(1000);
     }
 
-    fn reset(&self, value: u8) -> Result<(), SdmmcError> {
-        self.register.software_reset.set(value);
-        dev_log!("[set] software_reset: {:#x}\n", value);
-        let ret = self.wait_for_event(&self.register.software_reset, Some(value), 0, 100000);
+    fn reset(&self, value: FieldValue<u8, SOFTWARE_RESET::Register>) -> Result<(), SdmmcError> {
+        self.register.software_reset.write(value);
+        dev_log!("[set] software_reset: {:#x}\n", value.value);
+        let ret = self.wait_for_event(&self.register.software_reset, Some(value.value), 0, 100000);
         dev_log!(
             "[wait] software_reset, mask: {:#x}, value {:#x}\n",
-            value,
+            value.value,
             0
         );
         ret
     }
 
     fn enable_bus_power(&self) {
-        self.register
-            .power_control
-            .set((PC_BUS_VSEL_3V3_MASK | PC_BUS_PWR_MASK) & !PC_EMMC_HW_RST_MASK);
-        dev_log!(
-            "[set] power_control: {:#x}\n",
-            (PC_BUS_VSEL_3V3_MASK | PC_BUS_PWR_MASK) & !PC_EMMC_HW_RST_MASK
-        );
+        let power_control = POWER_CONTROL::SD_BUS_POWER_FOR_VDD1::On
+            + POWER_CONTROL::SD_BUS_VOLTAGE_SELECT_FOR_VDD1::V3_3;
+        self.register.power_control.write(power_control);
+        dev_log!("[set] power_control: {:#x}\n", power_control.value);
         usleep(200)
     }
 
     fn reset_config(&self) -> Result<(), SdmmcError> {
         self.disable_bus_power();
-        self.reset(SWRST_ALL_MASK)?;
+        self.reset(SOFTWARE_RESET::ALL::On)?;
         self.enable_bus_power();
         Ok(())
     }
 
-    fn init_power(&self, host_caps: u32) {
-        let power_level: u8;
-        if (host_caps & CAP_VOLT_3V3_MASK) != 0 {
-            power_level = PC_BUS_VSEL_3V3_MASK;
-        } else if (host_caps & CAP_VOLT_3V0_MASK) != 0 {
-            power_level = PC_BUS_VSEL_3V0_MASK;
-        } else if (host_caps & CAP_VOLT_1V8_MASK) != 0 {
-            power_level = PC_BUS_VSEL_1V8_MASK;
+    fn init_power(&self, host_caps: LocalRegisterCopy<u32, CAPABILITIES_LO::Register>) {
+        let mut power_control = POWER_CONTROL::SD_BUS_POWER_FOR_VDD1::On;
+        if host_caps.is_set(CAPABILITIES_LO::VOLTAGE_SUPPORT_V3_3) {
+            power_control += POWER_CONTROL::SD_BUS_VOLTAGE_SELECT_FOR_VDD1::V3_3;
+        } else if host_caps.is_set(CAPABILITIES_LO::VOLTAGE_SUPPORT_V3_0) {
+            power_control += POWER_CONTROL::SD_BUS_VOLTAGE_SELECT_FOR_VDD1::V3_0;
+        } else if host_caps.is_set(CAPABILITIES_LO::VOLTAGE_SUPPORT_V1_8) {
+            power_control += POWER_CONTROL::SD_BUS_VOLTAGE_SELECT_FOR_VDD1::V1_8;
         } else {
-            power_level = 0;
+            panic!();
         }
 
-        self.register
-            .power_control
-            .set(power_level | PC_BUS_PWR_MASK);
-        dev_log!(
-            "[set] power_control: {:#x}\n",
-            power_level | PC_BUS_PWR_MASK
-        )
+        self.register.power_control.write(power_control);
+        dev_log!("[set] power_control: {:#x}\n", power_control.value)
     }
 
     fn init_dma(&self) {
-        self.register.host_control_1.set(HC_DMA_ADMA2_64_MASK);
-        dev_log!("[set] host_control_1: {:#x}\n", HC_DMA_ADMA2_64_MASK)
+        let host_control_1 =
+            HOST_CONTROL_1::DATA_TRANSFER_WIDTH::Bits1 + HOST_CONTROL_1::DMA_SELECT::ADMA2_64bit;
+        self.register.host_control_1.write(host_control_1);
+        dev_log!("[set] host_control_1: {:#x}\n", host_control_1.value);
     }
 
     fn init_interrupt(&mut self) {
+        let normal_interrupt =
+            NORMAL_INTERRUPT::ENABLE::All.value & !NORMAL_INTERRUPT::CARD_INSERTION::SET.value;
         self.register
             .normal_interrupt_status_enable
-            .set(NORM_INTR_ALL_MASK & !INTR_CARD_MASK);
+            .set(normal_interrupt);
         dev_log!(
             "[set] normal_interrupt_status_enable: {:#x}\n",
-            NORM_INTR_ALL_MASK & !INTR_CARD_MASK
+            normal_interrupt
         );
+
+        let error_interrupt = ERROR_INTERRUPT::ENABLE::All;
         self.register
             .error_interrupt_status_enable
-            .set(ERROR_INTR_ALL_MASK);
+            .write(error_interrupt);
         dev_log!(
             "[set] error_interrupt_status_enable: {:#x}\n",
-            ERROR_INTR_ALL_MASK
+            error_interrupt.value
         );
+
         let _ = self.sdmmc_config_interrupt(false, false);
     }
 
-    fn host_config(&mut self, host_caps: u32) {
+    fn host_config(&mut self, host_caps: LocalRegisterCopy<u32, CAPABILITIES_LO::Register>) {
         self.init_power(host_caps);
         self.init_dma();
         self.init_interrupt();
 
-        self.transfer_mode = TM_DMA_EN_MASK | TM_BLK_CNT_EN_MASK | TM_DAT_DIR_SEL_MASK;
-
-        self.register.block_size.set(BLK_SIZE_512_MASK);
-        dev_log!("[set] block_size: {:#x}\n", BLK_SIZE_512_MASK)
+        let block_size = BLOCK_SIZE::TRANSFER_BLOCK_SIZE::Size512;
+        self.register.block_size.write(block_size);
+        dev_log!("[set] block_size: {:#x}\n", block_size.value)
     }
 
-    fn cfg_initialize(&mut self) -> u32 {
-        let hc_version = self.register.host_controller_version.get() & HC_SPEC_VER_MASK;
-        info!("host controller version: {}", hc_version);
-        assert_eq!(hc_version, 2);
+    fn cfg_initialize(&mut self) {
+        let hc_version = self
+            .register
+            .host_controller_version
+            .read(HOST_CONTROLLER_VERSION::SPECIFICATION_VERSION);
+        dev_log!("host controller version: {}\n", hc_version);
+        assert!(hc_version == HOST_CONTROLLER_VERSION::SPECIFICATION_VERSION::V3_00.value);
 
-        let host_caps = self.register.capabilities_0.get();
-        sdhci_print_capabilities(host_caps, self.register.capabilities_1.get());
+        let host_caps = self.register.capabilities_lo.extract();
+        sdhci_print_capabilities(host_caps.get(), self.register.capabilities_hi.get());
 
-        if let Err(_) = self.reset_config() {
-            panic!("reset failed")
-        }
+        self.reset_config().expect("reset failed");
 
-        self.host_config(host_caps);
-
-        host_caps
+        self.host_config(host_caps)
     }
 
     fn dll_rst_ctrl(&self, en_rst: u8) {
@@ -978,13 +1225,13 @@ impl<H: SdhciHardware> SdhciHost<H> {
         self.dll_rst_ctrl(0);
     }
 
-    fn calc_clock(&self, clk_freq: u32) -> u32 {
+    fn calc_clock(&self, clk_freq: u32) -> FieldValue<u16, CLOCK_CONTROL::Register> {
         let mut divisor: u16 = 0;
 
         if INPUT_CLOCK_HZ > clk_freq {
-            for div_cnt in 1..(CC_EXT_MAX_DIV_CNT / 2 + 1) {
-                if INPUT_CLOCK_HZ / ((div_cnt as u32) * 2) <= clk_freq {
-                    divisor = div_cnt;
+            for div_cnt in 1..1024 {
+                if INPUT_CLOCK_HZ / (div_cnt * 2) <= clk_freq {
+                    divisor = div_cnt as u16;
                     break;
                 }
             }
@@ -992,38 +1239,43 @@ impl<H: SdhciHardware> SdhciHost<H> {
 
         dev_log!("divisor: {}\n", divisor);
 
-        ((divisor as u32 & CC_SDCLK_FREQ_SEL_MASK) << CC_DIV_SHIFT)
-            | (((divisor as u32 >> 8) & CC_SDCLK_FREQ_SEL_EXT_MAS) << CC_EXT_DIV_SHIFT)
+        CLOCK_CONTROL::SDCLK_FREQUENCY_SELECT_HI
+            .val(divisor >> (size_of::<u16>() * 8 - CLOCK_CONTROL::SDCLK_FREQUENCY_SELECT_LO.shift))
+            + CLOCK_CONTROL::SDCLK_FREQUENCY_SELECT_LO.val(divisor)
     }
 
-    fn enable_clock(&self, mut clock: u16) -> Result<(), SdmmcError> {
-        clock |= CC_INT_CLK_EN_MASK;
-        self.register.clock_control.set(clock);
-        dev_log!("[set] clock_control: {:#x}\n", clock);
+    fn enable_clock(
+        &self,
+        mut clock: FieldValue<u16, CLOCK_CONTROL::Register>,
+    ) -> Result<(), SdmmcError> {
+        clock += CLOCK_CONTROL::INTERNAL_CLOCK_ENABLE::Oscillate;
+        self.register.clock_control.write(clock);
+        dev_log!("[set] clock_control: {:#x}\n", clock.value);
 
         self.wait_for_event(
             &self.register.clock_control,
-            Some(CC_INT_CLK_STABLE_MASK),
-            CC_INT_CLK_STABLE_MASK,
+            Some(CLOCK_CONTROL::INTERNAL_CLOCK_STABLE::Ready.value),
+            CLOCK_CONTROL::INTERNAL_CLOCK_STABLE::Ready.value,
             150000,
         )?;
         dev_log!(
             "[wait] clock_control, mask: {}, value: {}\n",
-            CC_INT_CLK_STABLE_MASK,
-            CC_INT_CLK_STABLE_MASK
+            CLOCK_CONTROL::INTERNAL_CLOCK_STABLE::Ready.value,
+            CLOCK_CONTROL::INTERNAL_CLOCK_STABLE::Ready.value
         );
 
-        clock |= CC_SD_CLK_EN_MASK;
-        self.register.clock_control.set(clock);
-        dev_log!("[set] clock_control: {:#x}\n", clock);
+        clock += CLOCK_CONTROL::SD_CLOCK_ENABLE::On;
+        self.register.clock_control.write(clock);
+        dev_log!("[set] clock_control: {:#x}\n", clock.value);
 
         Ok(())
     }
 
     fn set_clock(&self, clk_freq: u32) -> Result<(), SdmmcError> {
         /* Disable clock */
-        self.register.clock_control.set(0);
-        dev_log!("[set] clock_control: {:#x}\n", 0);
+        let clock_control = CLOCK_CONTROL::SD_CLOCK_ENABLE::Off;
+        self.register.clock_control.write(clock_control);
+        dev_log!("[set] clock_control: {:#x}\n", clock_control.value);
 
         if clk_freq == 0 {
             return Err(SdmmcError::EINVAL);
@@ -1031,7 +1283,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
 
         let clock = self.calc_clock(clk_freq);
 
-        self.enable_clock(clock as u16)
+        self.enable_clock(clock)
     }
 
     fn change_clk_freq(&self, clk_freq: u32) -> Result<(), SdmmcError> {
@@ -1039,30 +1291,41 @@ impl<H: SdhciHardware> SdhciHost<H> {
         self.set_clock(clk_freq)
     }
 
-    fn card_initialize(&self, _host_caps: u32) -> Result<(), SdmmcError> {
+    fn card_initialize(&self) -> Result<(), SdmmcError> {
         self.change_clk_freq(CLK_400_KHZ)?;
 
         usleep(INIT_DELAY);
 
+        let normal_interrupt = NORMAL_INTERRUPT::ENABLE::All;
         self.register
             .normal_interrupt_status
-            .set(NORM_INTR_ALL_MASK);
+            .write(normal_interrupt);
         dev_log!("[set] normal_interrupt_status: ");
-        sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(NORM_INTR_ALL_MASK));
-        self.register
-            .error_interrupt_status
-            .set(ERROR_INTR_ALL_MASK);
-        dev_log!("[set] error_interrupt_status: {:#x}\n", ERROR_INTR_ALL_MASK);
+        sdhci_print_normal_interrupt_status(normal_interrupt.value);
 
-        self.reset(SWRST_CMD_LINE_MASK)
+        let error_interrupt = ERROR_INTERRUPT::ENABLE::All;
+        self.register.error_interrupt_status.write(error_interrupt);
+        dev_log!(
+            "[set] error_interrupt_status: {:#x}\n",
+            error_interrupt.value
+        );
+
+        self.reset(SOFTWARE_RESET::CMD_LINE::On)
     }
 
-    fn check_bus_idle(&self, value: u32) -> Result<(), SdmmcError> {
-        if self.register.present_state.get() & PSR_CARD_INSRT_MASK != 0 {
-            self.wait_for_event(&self.register.present_state, Some(value), 0, 10000000)?;
+    fn check_bus_idle(
+        &self,
+        value: FieldValue<u32, PRESENT_STATE::Register>,
+    ) -> Result<(), SdmmcError> {
+        if self
+            .register
+            .present_state
+            .is_set(PRESENT_STATE::CARD_INSERTED)
+        {
+            self.wait_for_event(&self.register.present_state, Some(value.value), 0, 10000000)?;
             dev_log!(
                 "[wait] present_state: mask: {:#x}, value: {:#x}\n",
-                value,
+                value.value,
                 0
             );
         }
@@ -1070,24 +1333,32 @@ impl<H: SdhciHardware> SdhciHost<H> {
     }
 
     fn setup_cmd(&self, arg: u32, blk_cnt: u32) -> Result<(), SdmmcError> {
-        self.check_bus_idle(PSR_INIHIBIT_CMD_MASK)?;
+        self.check_bus_idle(PRESENT_STATE::COMMAND_INHIBIT_CMD::On)?;
 
-        self.register.block_count.set(blk_cnt as u16);
+        self.register.block_count_16.set(blk_cnt as u16);
         dev_log!("[set] block_count: {:#x}\n", blk_cnt);
-        self.register.timeout_control.set(0xE);
-        dev_log!("[set] timeout_control: {:#x}\n", 0xE);
+        let timeout_control = TIMEOUT_CONTROL::DATA_TIMEOUT_COUNTER::Max;
+        self.register.timeout_control.set(timeout_control.value);
+        dev_log!("[set] timeout_control: {:#x}\n", timeout_control.value);
         self.register.argument.set(arg);
         dev_log!("[set] argument: {:#x}\n", arg);
 
         // acknowledge interrupt
+        let normal_interrupt = NORMAL_INTERRUPT::ENABLE::All;
         self.register
             .normal_interrupt_status
-            .set(NORM_INTR_ALL_MASK);
-        dev_log!("[set] normal_interrupt_status: {:#x}\n", NORM_INTR_ALL_MASK);
-        self.register
-            .error_interrupt_status
-            .set(ERROR_INTR_ALL_MASK);
-        dev_log!("[set] error_interrupt_status: {:#x}\n", ERROR_INTR_ALL_MASK);
+            .write(normal_interrupt);
+        dev_log!(
+            "[set] normal_interrupt_status: {:#x}\n",
+            normal_interrupt.value
+        );
+
+        let error_interrupt = ERROR_INTERRUPT::ENABLE::All;
+        self.register.error_interrupt_status.write(error_interrupt);
+        dev_log!(
+            "[set] error_interrupt_status: {:#x}\n",
+            error_interrupt.value
+        );
 
         Ok(())
     }
@@ -1100,54 +1371,51 @@ impl<H: SdhciHardware> SdhciHost<H> {
             // if present_state & PSR_INHIBIT_DAT_MASK != 0
         }
 
-        let mut command: u16 = (cmdidx as u16) << 8;
+        let mut command = COMMAND::INDEX.val(cmdidx as u16);
         if present {
-            command |= 1 << 5;
+            command += COMMAND::DATA_PRESENT::On;
         }
         if (resp_type & MMC_RSP_PRESENT) != 0 {
             if (resp_type & MMC_RSP_136) != 0 {
-                command |= 0b01;
+                command += COMMAND::RESPONSE_TYPE::Response136;
             } else if (resp_type & MMC_RSP_BUSY) != 0 {
-                command |= 0b11;
+                command += COMMAND::RESPONSE_TYPE::Response48Busy;
             } else {
-                command |= 0b10;
+                command += COMMAND::RESPONSE_TYPE::Response48;
             }
         }
         if (resp_type & MMC_RSP_CRC) != 0 {
-            command |= 0b1000;
+            command += COMMAND::CRC_CHECK::On;
         }
         if (resp_type & MMC_RSP_OPCODE) != 0 {
-            command |= 0b10000;
+            command += COMMAND::INDEX_CHECK::On;
         }
 
-        self.register.transfer_mode.set(self.transfer_mode);
-        dev_log!("[set] transfer_mode: ");
-        sdhci_print_transfer_mode(self.transfer_mode);
-        self.register.command.set(command);
+        self.register.command.write(command);
         dev_log!("[set] command: ");
-        sdhci_print_command(command);
+        sdhci_print_command(command.value);
     }
 
     fn setup_read_dma(
         &mut self,
         block_count: u32,
-        mut block_size: u16,
+        block_size: FieldValue<u16, BLOCK_SIZE::Register>,
         buffer_pointer: u64,
+        transfer_mode: FieldValue<u16, TRANSFER_MODE::Register>,
     ) -> Result<(), SdmmcError> {
-        self.register.block_size.set(block_size & BLK_SIZE_MASK);
-        dev_log!("[set] block_size: {:#x}\n", block_size & BLK_SIZE_MASK);
-        block_size = self.register.block_size.get();
+        self.register.block_size.write(block_size);
+        dev_log!("[set] block_size: {:#x}\n", block_size.value);
 
-        if block_size != 512 {
-            return Err(SdmmcError::EIO);
-        }
+        self.register.transfer_mode.write(transfer_mode);
+        dev_log!("[set] transfer_mode: ");
+        sdhci_print_transfer_mode(transfer_mode.value);
 
         let total_desc_lines: u32;
-        if block_count * (block_size as u32) < DESC_MAX_LENGTH {
+        if block_count * (block_size.value as u32) < DESC_MAX_LENGTH {
             total_desc_lines = 1;
         } else {
-            total_desc_lines = (block_count * block_size as u32) / DESC_MAX_LENGTH
-                + ((block_count * block_size as u32) % DESC_MAX_LENGTH == 0) as u32;
+            total_desc_lines = (block_count * block_size.value as u32) / DESC_MAX_LENGTH
+                + ((block_count * block_size.value as u32) % DESC_MAX_LENGTH == 0) as u32;
         }
 
         let ptr = self.memory.cast::<ADMA2Descriptor64>();
@@ -1165,7 +1433,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
 
             slice[total_desc_lines as usize - 1].address = buffer_pointer;
             slice[total_desc_lines as usize - 1].attribute = DESC_TRAN | DESC_END | DESC_VALID;
-            slice[total_desc_lines as usize - 1].length = block_count as u16 * block_size;
+            slice[total_desc_lines as usize - 1].length = block_count as u16 * block_size.value;
 
             for i in 0..total_desc_lines as usize {
                 dev_log!("ADMA desc {}: ", i);
@@ -1193,33 +1461,36 @@ impl<H: SdhciHardware> SdhciHost<H> {
     ) -> Result<(), SdmmcError> {
         dev_log!("\n<read_one_block_no_dma>\n");
 
-        // self.register.block_size.set(512);
-
-        self.register.block_count.set(1);
+        self.register.block_count_16.set(1);
 
         self.register.argument.set(start_idx);
 
-        let transfer_mode = 0b010010;
-        self.register.transfer_mode.set(transfer_mode);
-        sdhci_print_transfer_mode(transfer_mode);
+        let transfer_mode = TRANSFER_MODE::DMA_ENABLE::Off
+            + TRANSFER_MODE::BLOCK_COUNT_ENABLE::On
+            + TRANSFER_MODE::DATA_TRANSFER_DIRECTION::Read;
+        self.register.transfer_mode.write(transfer_mode);
+        sdhci_print_transfer_mode(transfer_mode.value);
 
-        let command = (17 << 8) | 0b00111010;
-        self.register.command.set(command);
-        sdhci_print_command(command);
+        let command = COMMAND::INDEX.val(17)
+            + COMMAND::DATA_PRESENT::On
+            + COMMAND::INDEX_CHECK::On
+            + COMMAND::CRC_CHECK::On;
+        self.register.command.write(command);
+        sdhci_print_command(command.value);
 
-        let command_complete = 1 << 0;
+        let command_complete = NORMAL_INTERRUPT::COMMAND_COMPLETE::SET;
         self.wait_for_event(
             &self.register.normal_interrupt_status,
-            Some(command_complete),
-            command_complete,
+            Some(command_complete.value),
+            command_complete.value,
             1000,
         )?;
 
-        let block_ready = 1 << 5;
+        let buffer_ready = NORMAL_INTERRUPT::BUFFER_READ_READY::SET;
         self.wait_for_event(
             &self.register.normal_interrupt_status,
-            Some(block_ready),
-            block_ready,
+            Some(buffer_ready.value),
+            buffer_ready.value,
             1000,
         )?;
 
@@ -1231,11 +1502,11 @@ impl<H: SdhciHardware> SdhciHost<H> {
             }
         }
 
-        let transfer_complete = 1 << 1;
+        let transfer_complete = NORMAL_INTERRUPT::TRANSFER_COMPLETE::SET;
         self.wait_for_event(
             &self.register.normal_interrupt_status,
-            Some(transfer_complete),
-            transfer_complete,
+            Some(transfer_complete.value),
+            transfer_complete.value,
             1000,
         )?;
 
@@ -1247,8 +1518,8 @@ impl<H: SdhciHardware> SdhciHost<H> {
 impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
         dev_log!("\n<init>\n");
-        let host_caps = self.cfg_initialize();
-        self.card_initialize(host_caps)?;
+        self.cfg_initialize();
+        self.card_initialize()?;
 
         let ios: MmcIos = MmcIos {
             clock: CLK_400_KHZ as u64,
@@ -1329,12 +1600,18 @@ impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
         if let Some(mmc_data) = data {
             self.setup_cmd(cmd.cmdarg, mmc_data.blockcnt)?;
             if let MmcDataFlag::SdmmcDataRead = mmc_data.flags {
-                if mmc_data.blockcnt == 1 {
-                    self.transfer_mode = TM_BLK_CNT_EN_MASK | TM_DAT_DIR_SEL_MASK | TM_DMA_EN_MASK;
-                } else {
+                let transfer_mode = TRANSFER_MODE::DMA_ENABLE::On
+                    + TRANSFER_MODE::DATA_TRANSFER_DIRECTION::Read
+                    + TRANSFER_MODE::BLOCK_COUNT_ENABLE::On;
+                if mmc_data.blockcnt > 1 {
                     todo!();
                 }
-                self.setup_read_dma(mmc_data.blockcnt, mmc_data.blocksize as u16, mmc_data.addr)?;
+                self.setup_read_dma(
+                    mmc_data.blockcnt,
+                    BLOCK_SIZE::TRANSFER_BLOCK_SIZE.val(mmc_data.blocksize as u16),
+                    mmc_data.addr,
+                    transfer_mode,
+                )?;
             } else {
                 todo!()
             }
@@ -1366,54 +1643,64 @@ impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
             sd_get_response_type(cmd.resp_type),
             cmd.cmdarg
         );
-        sdhci_print_normal_interrupt_status(&status);
+        sdhci_print_normal_interrupt_status(status.get());
         sdhci_print_error_interrupt_status(&self.register.error_interrupt_status.extract());
 
         sdhci_print_present_state_string(self.register.present_state.get());
 
-        if (cmd.cmdidx == 19 || cmd.cmdidx == 21) && (status.get() & INTR_BRR_MASK) != 0 {
-            self.register.normal_interrupt_status.set(INTR_BRR_MASK);
+        if (cmd.cmdidx == 19 || cmd.cmdidx == 21)
+            && status.is_set(NORMAL_INTERRUPT::BUFFER_READ_READY)
+        {
+            let normal_interrupt = NORMAL_INTERRUPT::BUFFER_READ_READY::SET;
+            self.register
+                .normal_interrupt_status
+                .write(normal_interrupt);
             dev_log!("[set] normal_interrupt_status: ");
-            sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(INTR_BRR_MASK));
+            sdhci_print_normal_interrupt_status(normal_interrupt.value);
         }
 
-        if (status.get() & INTR_ERR_MASK) != 0 {
+        if status.is_set(NORMAL_INTERRUPT::ERROR_INTERRUPT) {
             let error: SdmmcError;
-            if (self.register.error_interrupt_status.get() & !INTR_ERR_CT_MASK) == 0 {
+            if self
+                .register
+                .error_interrupt_status
+                .is_set(ERROR_INTERRUPT::COMMAND_TIMEOUT_ERROR)
+            {
                 error = SdmmcError::ETIMEDOUT;
             } else {
-                error = SdmmcError::EINVAL;
+                error = SdmmcError::EUNKNOWN;
             }
+
             /* Write to clear error bits */
-            self.register
-                .error_interrupt_status
-                .set(ERROR_INTR_ALL_MASK);
-            dev_log!("[set] error_interrupt_status: {:#x}\n", ERROR_INTR_ALL_MASK);
+            let error_interrupt = ERROR_INTERRUPT::ENABLE::All;
+            self.register.error_interrupt_status.write(error_interrupt);
+            dev_log!(
+                "[set] error_interrupt_status: {:#x}\n",
+                error_interrupt.value
+            );
             return Err(error);
         }
 
+        let normal_interrupt: FieldValue<u16, NORMAL_INTERRUPT::Register>;
+
+        // TODO
         if cmd.cmdidx == 17 {
-            if (status.get() & INTR_TC_MASK) != INTR_TC_MASK {
+            if !status.is_set(NORMAL_INTERRUPT::TRANSFER_COMPLETE) {
                 return Err(SdmmcError::EBUSY);
             }
-
-            if (status.get() & INTR_CC_MASK) != INTR_CC_MASK {
-                panic!("command should have completed");
-            }
-
-            self.register.normal_interrupt_status.set(INTR_TC_MASK);
-            dev_log!("[set] normal_interrupt_status: ");
-            sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(INTR_TC_MASK));
+            normal_interrupt =
+                NORMAL_INTERRUPT::COMMAND_COMPLETE::SET + NORMAL_INTERRUPT::TRANSFER_COMPLETE::SET;
         } else {
-            if (status.get() & INTR_CC_MASK) != INTR_CC_MASK {
+            if !status.is_set(NORMAL_INTERRUPT::COMMAND_COMPLETE) {
                 return Err(SdmmcError::EBUSY);
             }
+            normal_interrupt = NORMAL_INTERRUPT::COMMAND_COMPLETE::SET;
         }
-
-        /* Write to clear bit */
-        self.register.normal_interrupt_status.set(INTR_CC_MASK);
+        self.register
+            .normal_interrupt_status
+            .write(normal_interrupt);
         dev_log!("[set] normal_interrupt_status: ");
-        sdhci_print_normal_interrupt_status(&LocalRegisterCopy::new(INTR_CC_MASK));
+        sdhci_print_normal_interrupt_status(normal_interrupt.value);
 
         if cmd.resp_type & sdmmc_protocol::sdmmc::MMC_RSP_136 != 0 {
             // SDHCI_QUIRK2_RSP_136_HAS_CRC
@@ -1452,25 +1739,41 @@ impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
             enable_sdio_irq
         );
         if enable_irq {
+            let normal_interrupt = NORMAL_INTERRUPT::ENABLE::All;
             self.register
                 .normal_interrupt_signal_enable
-                .set(IRQ_ENABLE_MASK);
+                .write(normal_interrupt);
             dev_log!(
                 "[set] normal_interrupt_signal_enable: {:#x}\n",
-                IRQ_ENABLE_MASK
+                normal_interrupt.value
             );
+
+            let error_interrupt = ERROR_INTERRUPT::ENABLE::All;
             self.register
                 .error_interrupt_signal_enable
-                .set(ERR_ENABLE_MASK);
+                .write(error_interrupt);
             dev_log!(
                 "[set] error_interrupt_signal_enable: {:#x}\n",
-                ERR_ENABLE_MASK
+                error_interrupt.value
             );
         } else {
-            self.register.normal_interrupt_signal_enable.set(0);
-            dev_log!("[set] normal_interrupt_signal_enable: {:#x}\n", 0);
-            self.register.error_interrupt_signal_enable.set(0);
-            dev_log!("[set] error_interrupt_signal_enable: {:#x}\n", 0);
+            let normal_interrupt = NORMAL_INTERRUPT::ENABLE::None;
+            self.register
+                .normal_interrupt_signal_enable
+                .write(normal_interrupt);
+            dev_log!(
+                "[set] normal_interrupt_signal_enable: {:#x}\n",
+                normal_interrupt.value
+            );
+
+            let error_interrupt = ERROR_INTERRUPT::ENABLE::None;
+            self.register
+                .error_interrupt_signal_enable
+                .write(error_interrupt);
+            dev_log!(
+                "[set] error_interrupt_signal_enable: {:#x}\n",
+                error_interrupt.value
+            );
         }
 
         return Ok(());
