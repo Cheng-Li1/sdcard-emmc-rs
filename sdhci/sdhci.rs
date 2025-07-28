@@ -8,7 +8,11 @@
 use core::ptr;
 use sdmmc_protocol::dev_log;
 use sdmmc_protocol::sdmmc::mmc_struct::{MmcBusWidth, MmcTiming};
-use sdmmc_protocol::sdmmc::sdmmc_capability::{MMC_VDD_31_32, MMC_VDD_32_33, MMC_VDD_33_34};
+use sdmmc_protocol::sdmmc::sdmmc_capability::{
+    MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50, MMC_TIMING_UHS_SDR12,
+    MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50, MMC_TIMING_UHS_SDR104, MMC_VDD_31_32,
+    MMC_VDD_32_33, MMC_VDD_33_34,
+};
 use sdmmc_protocol::sdmmc::{
     HostInfo, MMC_RSP_136, MMC_RSP_BUSY, MMC_RSP_CRC, MMC_RSP_NONE, MMC_RSP_OPCODE,
     MMC_RSP_PRESENT, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
@@ -1158,7 +1162,30 @@ impl<H: SdhciHardware> SdhciHost<H> {
         dev_log!("[set] block_size: {:#x}\n", block_size.value)
     }
 
-    fn cfg_initialize(&mut self) {
+    fn get_cap(
+        &self,
+        caps_lo: LocalRegisterCopy<u32, CAPABILITIES_LO::Register>,
+        caps_hi: LocalRegisterCopy<u32, CAPABILITIES_HI::Register>,
+    ) -> u128 {
+        let mut ret: u128 = MMC_TIMING_LEGACY;
+        if caps_lo.is_set(CAPABILITIES_LO::HIGH_SPEED_SUPPORT) {
+            ret |= MMC_TIMING_SD_HS;
+        }
+        // we assume host controller version 3.0, which implies UHS-I support
+        ret |= MMC_TIMING_UHS_SDR12 | MMC_TIMING_UHS_SDR25;
+        if caps_hi.is_set(CAPABILITIES_HI::SDR50_SUPPORT) {
+            ret |= MMC_TIMING_UHS_SDR50;
+        }
+        if caps_hi.is_set(CAPABILITIES_HI::DDR50_SUPPORT) {
+            ret |= MMC_TIMING_UHS_DDR50;
+        }
+        if caps_hi.is_set(CAPABILITIES_HI::SDR104_SUPPORT) {
+            ret |= MMC_TIMING_UHS_SDR104;
+        }
+        ret
+    }
+
+    fn cfg_initialize(&mut self) -> u128 {
         let hc_version = self
             .register
             .host_controller_version
@@ -1166,12 +1193,15 @@ impl<H: SdhciHardware> SdhciHost<H> {
         dev_log!("host controller version: {}\n", hc_version);
         assert!(hc_version == HOST_CONTROLLER_VERSION::SPECIFICATION_VERSION::V3_00.value);
 
-        let host_caps = self.register.capabilities_lo.extract();
-        sdhci_print_capabilities(host_caps.get(), self.register.capabilities_hi.get());
+        let host_caps_lo = self.register.capabilities_lo.extract();
+        let host_caps_hi = self.register.capabilities_hi.extract();
+        sdhci_print_capabilities(host_caps_lo.get(), host_caps_hi.get());
 
         self.reset_config().expect("reset failed");
 
-        self.host_config(host_caps)
+        self.host_config(host_caps_lo);
+
+        self.get_cap(host_caps_lo, host_caps_hi)
     }
 
     fn dll_rst_ctrl(&self, en_rst: u8) {
@@ -1496,7 +1526,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
 
         for i in (0..512).step_by(4) {
             let data = self.register.buffer_data_port.get();
-            // assumes no string aliasing
+            // assumes no strict aliasing
             unsafe {
                 *((destination + i) as *mut u32) = data;
             }
@@ -1518,7 +1548,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
 impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
         dev_log!("\n<init>\n");
-        self.cfg_initialize();
+        let caps = self.cfg_initialize();
         self.card_initialize()?;
 
         let ios: MmcIos = MmcIos {
@@ -1546,7 +1576,7 @@ impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
 
         dev_log!("============== initialised ===============\n");
 
-        return Ok((ios, info, 0));
+        return Ok((ios, info, caps));
     }
 
     fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcError> {
