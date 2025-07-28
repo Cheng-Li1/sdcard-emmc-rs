@@ -27,8 +27,6 @@ use tock_registers::{LocalRegisterCopy, RegisterLongName, UIntLike, register_bit
 
 use crate::sdhci_trait::SdhciHardware;
 
-const INPUT_CLOCK_HZ: u32 = 187481262;
-
 const INIT_DELAY: u64 = 10000;
 
 const CLK_400_KHZ: u32 = 400000;
@@ -1049,6 +1047,7 @@ impl VoltageOps for SdhciVoltageSwitch {
                 self.register
                     .host_control_2
                     .modify(HOST_CONTROL_2::V1_8_SIGNALIING_ENABLE::On);
+                dev_log!("[modify] host_control_2: 1.8V signaling\n");
 
                 usleep(5000);
 
@@ -1299,9 +1298,23 @@ impl<H: SdhciHardware> SdhciHost<H> {
     fn calc_clock(&self, clk_freq: u32) -> FieldValue<u16, CLOCK_CONTROL::Register> {
         let mut divisor: u16 = 0;
 
-        if INPUT_CLOCK_HZ > clk_freq {
+        let slcr_base_addr = 0xFF180000 as u64;
+        let sd_config_reg1 = 0x000000031C;
+        let input_clock_mask = 0x7f800000;
+        let input_clock_shift = 23;
+        let mhz = 1000000;
+        let input_clock =
+            ((unsafe { ptr::read_volatile((slcr_base_addr + sd_config_reg1) as *const u32) }
+                & input_clock_mask)
+                >> input_clock_shift)
+                * mhz;
+
+        // non-dll clock mode
+        dev_log!("[get] SD1_BASECLK: {}\n", input_clock);
+
+        if input_clock > clk_freq {
             for div_cnt in 1..1024 {
-                if INPUT_CLOCK_HZ / (div_cnt * 2) <= clk_freq {
+                if input_clock / (div_cnt * 2) <= clk_freq {
                     divisor = div_cnt as u16;
                     break;
                 }
@@ -1626,6 +1639,7 @@ impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
             MmcTiming::ClockStop => {
                 let mut clock_control = self.register.clock_control.extract();
                 clock_control.modify(CLOCK_CONTROL::SD_CLOCK_ENABLE::Off);
+                dev_log!("[modify] clock_control, sd clock enable: off\n");
                 self.register.clock_control.set(clock_control.get());
                 return Ok(0);
             }
