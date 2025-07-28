@@ -5,7 +5,7 @@ extern crate alloc;
 
 mod sel4_microkit_os;
 
-use sdhci::sdhci::SdhciHost;
+use sdhci::sdhci::{SdhciVoltageSwitch, SdhciHost};
 use sdmmc_hal::sdhci_arasan::SdhciArasan;
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sdmmc_protocol::{
@@ -15,7 +15,7 @@ use sdmmc_protocol::{
 use sel4_microkit::{Handler, Infallible, debug_print, debug_println, protection_domain};
 
 use crate::sel4_microkit_os::TimerOps;
-use crate::sel4_microkit_os::{SerialOps, odroidc4::Odroidc4VoltageSwitch};
+use crate::sel4_microkit_os::{SerialOps};
 
 const TIMER: TimerOps = TimerOps::new();
 const SERIAL: SerialOps = SerialOps::new();
@@ -79,7 +79,7 @@ fn init() -> impl Handler {
     };
 
     // Handling result in two different ways, by matching and unwrap_or_else
-    let res = SdmmcProtocol::new(hal, TIMER, None::<Odroidc4VoltageSwitch>);
+    let res = unsafe { SdmmcProtocol::new(hal, TIMER, Some(SdhciVoltageSwitch::new(0xff170000))) };
     let mut sdmmc_host = match res {
         Ok(host) => host,
         Err(err) => panic!("SDMMC: Error at init {:?}", err),

@@ -18,10 +18,10 @@ use sdmmc_protocol::sdmmc::{
     MMC_RSP_PRESENT, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
     SdmmcError,
 };
-use sdmmc_protocol::sdmmc_os::process_wait_unreliable;
+use sdmmc_protocol::sdmmc_os::{VoltageOps, process_wait_unreliable};
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use tock_registers::fields::FieldValue;
-use tock_registers::interfaces::{Readable, Writeable};
+use tock_registers::interfaces::{ReadWriteable, Readable, Writeable};
 use tock_registers::registers::{ReadOnly, ReadWrite, WriteOnly};
 use tock_registers::{LocalRegisterCopy, RegisterLongName, UIntLike, register_bitfields};
 
@@ -76,6 +76,7 @@ register_bitfields![u32,
             Off = 0,
             On = 1,
         ],
+        DAT_LINE_SIGNAL_LEVEL_HI OFFSET(4) NUMBITS(4) [],
         WRITE_TRANSFER_ACTIVE OFFSET(8) NUMBITS(1) [
             Off = 0,
             On = 1,
@@ -445,7 +446,7 @@ register_bitfields![u8,
     ],
     POWER_CONTROL [
         SD_BUS_POWER_FOR_VDD1 OFFSET(0) NUMBITS(1) [ Off = 0, On = 1 ],
-        SD_BUS_VOLTAGE_SELECT_FOR_VDD1 OFFSET(1) NUMBITS(3) [ V1_8 = 0b101, V3_0 = 0b110, V3_3 = 0b111 ]
+        SD_BUS_VOLTAGE_SELECT_FOR_VDD1 OFFSET(1) NUMBITS(3) [ V1_8 = 0b101, V3_0 = 0b110, V3_3 = 0b111 ],
     ],
     SOFTWARE_RESET [
         ALL OFFSET(0) NUMBITS(1) [Off = 0, On = 1],
@@ -1028,6 +1029,46 @@ fn usleep(time: u64) {
     process_wait_unreliable(time * ns_in_us);
 }
 
+pub struct SdhciVoltageSwitch {
+    register: &'static mut SdhciRegister,
+}
+impl SdhciVoltageSwitch {
+    pub unsafe fn new(sdmmc_register_base: u64) -> Self {
+        let register: &'static mut SdhciRegister =
+            unsafe { SdhciRegister::new(sdmmc_register_base) };
+
+        SdhciVoltageSwitch { register }
+    }
+}
+impl VoltageOps for SdhciVoltageSwitch {
+    fn card_voltage_switch(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
+        match voltage {
+            MmcSignalVoltage::Voltage180 => {
+                dev_log!("<card_voltage_switch> 1.8V\n");
+
+                self.register
+                    .host_control_2
+                    .modify(HOST_CONTROL_2::V1_8_SIGNALIING_ENABLE::On);
+
+                usleep(5000);
+
+                if self
+                    .register
+                    .host_control_2
+                    .is_set(HOST_CONTROL_2::V1_8_SIGNALIING_ENABLE)
+                {
+                    return Ok(());
+                } else {
+                    return Err(SdmmcError::ETIMEDOUT);
+                }
+            }
+            _ => {
+                todo!();
+            }
+        }
+    }
+}
+
 impl<H: SdhciHardware> SdhciHost<H> {
     pub unsafe fn new(
         sdmmc_register_base: u64,
@@ -1581,17 +1622,43 @@ impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
 
     fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcError> {
         dev_log!("\n<config_timing> {:?}\n", timing);
-        Ok(CLK_400_KHZ as u64)
+        match timing {
+            MmcTiming::ClockStop => {
+                let mut clock_control = self.register.clock_control.extract();
+                clock_control.modify(CLOCK_CONTROL::SD_CLOCK_ENABLE::Off);
+                self.register.clock_control.set(clock_control.get());
+                return Ok(0);
+            }
+            MmcTiming::CardSetup | MmcTiming::Legacy => {
+                let clock = self.calc_clock(CLK_400_KHZ);
+                self.enable_clock(clock)?;
+                usleep(1000);
+                return Ok(CLK_400_KHZ as u64);
+            }
+            _ => todo!(),
+        }
     }
 
     fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcError> {
         dev_log!("\n<config_bus_width> {:?}\n", bus_width);
-        Ok(())
+        if let MmcBusWidth::Width1 = bus_width {
+            return Ok(());
+        } else {
+            return Err(SdmmcError::ENOTIMPLEMENTED);
+        }
     }
 
     fn sdmmc_read_datalanes(&self) -> Result<u8, SdmmcError> {
         dev_log!("\n<read_datalanes> \n");
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+
+        let present_state = self.register.present_state.extract();
+        let lo = present_state.read(PRESENT_STATE::DAT_LINE_SIGNAL_LEVEL_LO) as u8;
+        let hi = present_state.read(PRESENT_STATE::DAT_LINE_SIGNAL_LEVEL_HI) as u8;
+        let datalanes = (hi << 4) | lo;
+
+        sdhci_print_present_state_string(present_state.get());
+
+        return Ok(datalanes);
     }
 
     fn sdmmc_send_command(
