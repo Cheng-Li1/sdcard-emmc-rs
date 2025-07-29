@@ -74,7 +74,7 @@ fn init() -> impl Handler {
             unsafe_stolen_memory,
             dummy_cache_invalidate_function,
             physical_memory_addr as u32,
-            SdhciArasan::new()
+            SdhciArasan::new(0xFF5E0000, 0x00FF180000)
         )
     };
 

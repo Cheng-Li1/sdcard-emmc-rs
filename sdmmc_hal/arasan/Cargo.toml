@@ -27,3 +27,4 @@ path = "lib.rs"
 [dependencies]
 sdmmc_protocol = { path = "../../sdmmc_protocol" }
 sdhci = { path = "../../sdhci" }
+tock-registers = "0.10.0"

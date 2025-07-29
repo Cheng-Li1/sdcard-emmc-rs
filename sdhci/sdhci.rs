@@ -29,7 +29,7 @@ use crate::sdhci_trait::SdhciHardware;
 
 const INIT_DELAY: u64 = 10000;
 
-const CLK_400_KHZ: u32 = 400000;
+const CLK_400_KHZ: u64 = 400000;
 
 const CAP_VOLT_3V3_MASK: u32 = 0x01000000;
 const CAP_VOLT_3V0_MASK: u32 = 0x02000000;
@@ -1244,13 +1244,13 @@ impl<H: SdhciHardware> SdhciHost<H> {
         self.get_cap(host_caps_lo, host_caps_hi)
     }
 
-    fn dll_rst_ctrl(&self, en_rst: u8) {
+    fn dll_rst_ctrl(&self, reset: bool) {
         let slcr_base_addr: u64 = 0xFF180000;
         let sd_dll_ctrl = 0x00000358;
         let sd1_dll_rst = 0x00040000;
         unsafe {
             let mut dll_ctrl = ptr::read_volatile((slcr_base_addr + sd_dll_ctrl) as *const u32);
-            if en_rst == 1 {
+            if reset {
                 dll_ctrl |= sd1_dll_rst;
             } else {
                 dll_ctrl &= !sd1_dll_rst;
@@ -1290,28 +1290,15 @@ impl<H: SdhciHardware> SdhciHost<H> {
     }
 
     fn set_tap_delay(&self) {
-        self.dll_rst_ctrl(1);
+        self.dll_rst_ctrl(true);
         self.config_tap_delay();
-        self.dll_rst_ctrl(0);
+        self.dll_rst_ctrl(false);
     }
 
-    fn calc_clock(&self, clk_freq: u32) -> FieldValue<u16, CLOCK_CONTROL::Register> {
+    fn calc_clock(&mut self, clk_freq: u64) -> FieldValue<u16, CLOCK_CONTROL::Register> {
+        let input_clock = self.sdhci_hal.get_clock_rate().unwrap();
+
         let mut divisor: u16 = 0;
-
-        let slcr_base_addr = 0xFF180000 as u64;
-        let sd_config_reg1 = 0x000000031C;
-        let input_clock_mask = 0x7f800000;
-        let input_clock_shift = 23;
-        let mhz = 1000000;
-        let input_clock =
-            ((unsafe { ptr::read_volatile((slcr_base_addr + sd_config_reg1) as *const u32) }
-                & input_clock_mask)
-                >> input_clock_shift)
-                * mhz;
-
-        // non-dll clock mode
-        dev_log!("[get] SD1_BASECLK: {}\n", input_clock);
-
         if input_clock > clk_freq {
             for div_cnt in 1..1024 {
                 if input_clock / (div_cnt * 2) <= clk_freq {
@@ -1355,7 +1342,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
         Ok(())
     }
 
-    fn set_clock(&self, clk_freq: u32) -> Result<(), SdmmcError> {
+    fn set_clock(&mut self, clk_freq: u64) -> Result<(), SdmmcError> {
         /* Disable clock */
         let clock_control = CLOCK_CONTROL::SD_CLOCK_ENABLE::Off;
         self.register.clock_control.write(clock_control);
@@ -1370,12 +1357,12 @@ impl<H: SdhciHardware> SdhciHost<H> {
         self.enable_clock(clock)
     }
 
-    fn change_clk_freq(&self, clk_freq: u32) -> Result<(), SdmmcError> {
+    fn change_clk_freq(&mut self, clk_freq: u64) -> Result<(), SdmmcError> {
         self.set_tap_delay();
         self.set_clock(clk_freq)
     }
 
-    fn card_initialize(&self) -> Result<(), SdmmcError> {
+    fn card_initialize(&mut self) -> Result<(), SdmmcError> {
         self.change_clk_freq(CLK_400_KHZ)?;
 
         usleep(INIT_DELAY);
