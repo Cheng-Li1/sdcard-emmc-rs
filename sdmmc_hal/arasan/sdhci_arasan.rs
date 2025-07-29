@@ -98,7 +98,7 @@ impl SdhciArasan {
 }
 
 impl SdhciHardware for SdhciArasan {
-    fn get_clock_rate(&mut self) -> Result<u64, SdmmcError> {
+    fn get_host_clock(&mut self) -> Result<u64, SdmmcError> {
         if self
             .crl_apb
             .iopll_ctrl

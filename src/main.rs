@@ -5,7 +5,7 @@ extern crate alloc;
 
 mod sel4_microkit_os;
 
-use sdhci::sdhci::{SdhciVoltageSwitch, SdhciHost};
+use sdhci::sdhci::{SdhciHost, SdhciVoltageSwitch};
 use sdmmc_hal::sdhci_arasan::SdhciArasan;
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sdmmc_protocol::{
@@ -14,8 +14,8 @@ use sdmmc_protocol::{
 };
 use sel4_microkit::{Handler, Infallible, debug_print, debug_println, protection_domain};
 
+use crate::sel4_microkit_os::SerialOps;
 use crate::sel4_microkit_os::TimerOps;
-use crate::sel4_microkit_os::{SerialOps};
 
 const TIMER: TimerOps = TimerOps::new();
 const SERIAL: SerialOps = SerialOps::new();
@@ -74,7 +74,7 @@ fn init() -> impl Handler {
             unsafe_stolen_memory,
             dummy_cache_invalidate_function,
             physical_memory_addr as u32,
-            SdhciArasan::new(0xFF5E0000, 0x00FF180000)
+            SdhciArasan::new(0xFF5E0000, 0x00FF180000),
         )
     };
 
@@ -90,7 +90,10 @@ fn init() -> impl Handler {
         .unwrap_or_else(|error| panic!("SDMMC: Error at setup {:?}", error));
 
     let unsafe_stolen_memory2 = 0x70019000;
-    if let Err(_) = sdmmc_host.get_hal().read_one_block_no_dma(0, unsafe_stolen_memory2) {
+    if let Err(_) = sdmmc_host
+        .get_hal()
+        .read_one_block_no_dma(0, unsafe_stolen_memory2)
+    {
         panic!("SDMMC: read_one_block_no_dma failed");
     }
     unsafe {

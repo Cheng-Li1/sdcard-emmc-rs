@@ -1022,6 +1022,7 @@ pub struct SdhciHost<H: SdhciHardware> {
     sdhci_hal: H,
 }
 
+// Should be changed to use the OS provided sleep function
 fn usleep(time: u64) {
     let ns_in_us: u64 = 1000;
     process_wait_unreliable(time * ns_in_us);
@@ -1030,6 +1031,7 @@ fn usleep(time: u64) {
 pub struct SdhciVoltageSwitch {
     register: &'static mut SdhciRegister,
 }
+
 impl SdhciVoltageSwitch {
     pub unsafe fn new(sdmmc_register_base: u64) -> Self {
         let register: &'static mut SdhciRegister =
@@ -1038,7 +1040,10 @@ impl SdhciVoltageSwitch {
         SdhciVoltageSwitch { register }
     }
 }
+
 impl VoltageOps for SdhciVoltageSwitch {
+    // Considering the approach to avoid voltage switch to 3.3V after voltage switch fail but rely on host
+    // reset logic to reset the voltage
     fn card_voltage_switch(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
         match voltage {
             MmcSignalVoltage::Voltage180 => {
@@ -1096,9 +1101,9 @@ impl<H: SdhciHardware> SdhciHost<H> {
         reg: &S,
         event_mask: Option<T>,
         event: T,
-        mut timeout: u32,
+        mut timeout_us: u32,
     ) -> Result<(), SdmmcError> {
-        while timeout > 0 {
+        while timeout_us > 0 {
             let mut value = reg.get();
             if let Some(mask) = event_mask {
                 value = value & mask;
@@ -1106,7 +1111,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
             if value == event {
                 return Ok(());
             }
-            timeout -= 1;
+            timeout_us -= 1;
             usleep(1);
         }
         Err(SdmmcError::ETIMEDOUT)
@@ -1296,7 +1301,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
     }
 
     fn calc_clock(&mut self, clk_freq: u64) -> FieldValue<u16, CLOCK_CONTROL::Register> {
-        let input_clock = self.sdhci_hal.get_clock_rate().unwrap();
+        let input_clock = self.sdhci_hal.get_host_clock().unwrap();
 
         let mut divisor: u16 = 0;
         if input_clock > clk_freq {
@@ -1352,9 +1357,9 @@ impl<H: SdhciHardware> SdhciHost<H> {
             return Err(SdmmcError::EINVAL);
         }
 
-        let clock = self.calc_clock(clk_freq);
+        let clock_div = self.calc_clock(clk_freq);
 
-        self.enable_clock(clock)
+        self.enable_clock(clock_div)
     }
 
     fn change_clk_freq(&mut self, clk_freq: u64) -> Result<(), SdmmcError> {
@@ -1362,6 +1367,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
         self.set_clock(clk_freq)
     }
 
+    // Change the function name to better reflect the change
     fn card_initialize(&mut self) -> Result<(), SdmmcError> {
         self.change_clk_freq(CLK_400_KHZ)?;
 
