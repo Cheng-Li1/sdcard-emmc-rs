@@ -32,6 +32,7 @@ jobs:
           -Z build-std=core,alloc,compiler_builtins \
           -Z build-std-features=compiler-builtins-mem \
           --target support/targets/$Arch.json \
+          --features meson \
           --verbose
         mv target/$Arch/$Build_Config/sdmmc_driver.elf ./sdmmc_driver.elf
       
