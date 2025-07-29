@@ -48,7 +48,8 @@ $(TARGET_ELF): $(BUILD_DIR)
 		-Z build-std=core,alloc,compiler_builtins \
 		-Z build-std-features=compiler-builtins-mem \
 		--target-dir $(BUILD_DIR) \
-		--target support/targets/aarch64-sel4-microkit-minimal.json
+		--target support/targets/aarch64-sel4-microkit-minimal.json \
+		--features "meson"
 	@echo "Build complete: $(TARGET_ELF)"
 
 .PHONY: clippy
@@ -58,7 +59,8 @@ clippy:
 		-Z build-std=core,alloc,compiler_builtins \
 		-Z build-std-features=compiler-builtins-mem \
 		--target-dir $(BUILD_DIR) \
-		--target support/targets/aarch64-sel4-microkit-minimal.json
+		--target support/targets/aarch64-sel4-microkit-minimal.json \
+		--features "meson"
 
 IMAGE_FILE := loader.img
 REPORT_FILE := report.txt

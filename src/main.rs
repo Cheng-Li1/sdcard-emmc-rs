@@ -5,8 +5,6 @@ extern crate alloc;
 
 mod sel4_microkit_os;
 
-use sdmmc_hal::meson_gx_mmc::SdmmcMesonHardware;
-
 use sdmmc_protocol::sdmmc_traits::SdmmcHardware;
 use sdmmc_protocol::{
     sdmmc::SdmmcProtocol,
@@ -14,11 +12,10 @@ use sdmmc_protocol::{
 };
 use sel4_microkit::{Handler, Infallible, debug_print, debug_println, protection_domain};
 
+use crate::sel4_microkit_os::SerialOps;
 use crate::sel4_microkit_os::TimerOps;
-use crate::sel4_microkit_os::{SerialOps, odroidc4::Odroidc4VoltageSwitch};
 
 const TIMER: TimerOps = TimerOps::new();
-const VOLTAGE: Odroidc4VoltageSwitch = Odroidc4VoltageSwitch::new();
 const SERIAL: SerialOps = SerialOps::new();
 
 // Debug function for printing out content in one block
@@ -49,8 +46,7 @@ fn init() -> impl Handler {
         sdmmc_protocol::sdmmc_os::set_logger(&SERIAL).unwrap();
     }
 
-    let meson_hal: SdmmcMesonHardware =
-        unsafe { SdmmcMesonHardware::new(sdmmc_hal::meson_gx_mmc::SDIO_BASE) };
+    let hal = unsafe { crate::sel4_microkit_os::platform::platform_hal() };
 
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
@@ -60,7 +56,7 @@ fn init() -> impl Handler {
     assert!((physical_memory_addr as usize).is_multiple_of(8));
 
     // Handling result in two different ways, by matching and unwrap_or_else
-    let res = SdmmcProtocol::new(meson_hal, TIMER, Some(VOLTAGE));
+    let res = SdmmcProtocol::new(hal, TIMER, Some(crate::sel4_microkit_os::platform::VOLTAGE));
     let mut sdmmc_host = match res {
         Ok(host) => host,
         Err(err) => panic!("SDMMC: Error at init {:?}", err),

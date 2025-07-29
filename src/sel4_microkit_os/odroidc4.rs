@@ -5,7 +5,10 @@ use sdmmc_protocol::{
     sdmmc_os::VoltageOps,
 };
 
+use meson_hal::meson_gx_mmc::SdmmcMesonHardware;
+
 pub struct Odroidc4VoltageSwitch;
+pub(crate) const VOLTAGE: Odroidc4VoltageSwitch = Odroidc4VoltageSwitch::new();
 
 /// Check the AO_GPIO_O_EN_N register in S905X3 datasheet
 const AO_RTI_OUTPUT_ENABLE_REG: u64 = 0xff800024;
@@ -120,4 +123,8 @@ impl VoltageOps for Odroidc4VoltageSwitch {
         }
         Ok(())
     }
+}
+
+pub unsafe fn platform_hal() -> SdmmcMesonHardware {
+    unsafe { SdmmcMesonHardware::new(meson_hal::meson_gx_mmc::SDIO_BASE) }
 }

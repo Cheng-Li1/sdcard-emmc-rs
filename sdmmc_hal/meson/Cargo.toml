@@ -1,11 +1,11 @@
 [package]
-name = "sdmmc_hal"
+name = "meson_hal"
 version = "0.1.0"
 edition = "2024"
 authors = ["Cheng Li 李澄 <lichengchaoreng@gmail.com>"]
 
 [lib]
-name = "sdmmc_hal"
+name = "meson_hal"
 path = "lib.rs"
 
 # The Hardware Abstraction Layer (HAL) is designed to be:

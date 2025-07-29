@@ -1,7 +1,13 @@
 use sdmmc_protocol::sdmmc_os::{Log, Sleep, process_wait_unreliable};
 use sel4_panicking_env::__debug_print_macro_helper;
 
-pub mod odroidc4;
+#[cfg(feature = "meson")]
+mod odroidc4;
+
+#[cfg(feature = "meson")]
+pub(crate) mod platform {
+    pub(crate) use crate::sel4_microkit_os::odroidc4::{VOLTAGE, platform_hal};
+}
 
 const NS_IN_US: u64 = 1000;
 
