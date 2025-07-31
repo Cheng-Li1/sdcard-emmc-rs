@@ -1,7 +1,7 @@
 use crate::{
     dev_log,
     sdmmc::{
-        HostInfo, MmcData, MmcIos, SdmmcCmd, SdmmcError,
+        HostInfo, MmcData, MmcIos, MmcSignalVoltage, SdmmcCmd, SdmmcError,
         mmc_struct::{MmcBusWidth, MmcTiming},
     },
     sdmmc_os::Sleep,
@@ -19,7 +19,7 @@ const DATA_TRANSFER_POLLING_CHANCE_BEFORE_TIME_OUT: u32 = 2048;
 /// Trait to be implemented by the sdcard hal
 pub trait SdmmcHardware {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     /// Change the clock, return the value or do not change it at all
@@ -27,11 +27,11 @@ pub trait SdmmcHardware {
     /// Beware at higher frequency, you may need to play with delay, adjust and clock phase
     /// to ensure that the clock edges (sampling points) occur just in time for the valid data window.
     fn sdmmc_config_timing(&mut self, timing: MmcTiming) -> Result<u64, SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     fn sdmmc_config_bus_width(&mut self, bus_width: MmcBusWidth) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     /// Reads the current state of the SD card data lanes.
@@ -47,7 +47,7 @@ pub trait SdmmcHardware {
     /// Note:
     /// - This function is not yet implemented and currently returns an `ENOTIMPLEMENTED` error.
     fn sdmmc_read_datalanes(&self) -> Result<u8, SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     /// Sends a command to the SD/MMC card, ensuring that busy signal handling is managed appropriately.
@@ -81,7 +81,7 @@ pub trait SdmmcHardware {
         cmd: &SdmmcCmd,
         data: Option<&MmcData>,
     ) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     fn sdmmc_receive_response(
@@ -89,7 +89,7 @@ pub trait SdmmcHardware {
         cmd: &SdmmcCmd,
         response: &mut [u32; 4],
     ) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     // Change the function signature to something like sdmmc_config_interrupt(&mut self, enable_irq: bool, enable_sdio_irq: bool);
@@ -98,11 +98,11 @@ pub trait SdmmcHardware {
         enable_irq: bool,
         enable_sdio_irq: bool,
     ) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     fn sdmmc_ack_interrupt(&mut self) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     /// At higher clock frequencies, timing mismatches can occur between the host's sampling point and the valid data window
@@ -121,11 +121,20 @@ pub trait SdmmcHardware {
         memory: *mut [u8; 64],
         sleep: &mut dyn Sleep,
     ) -> Result<(), SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
     }
 
     fn sdmmc_host_reset(&mut self) -> Result<MmcIos, SdmmcError> {
-        return Err(SdmmcError::ENOTIMPLEMENTED);
+        Err(SdmmcError::ENOTIMPLEMENTED)
+    }
+
+    /// This function implements the bare metal version of adjust signaling voltage
+    /// If in the SdmmcProtocol::new() function, there are different voltage switch
+    /// methods provided, this sdmmc_voltage_switch function will not be used
+    /// Power cycling is assumed in host reset function if voltage_switch is implemented here
+    fn sdmmc_voltage_switch(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
+        // Default behavior should be rushing instead of returning one error
+        panic!("sdmmc: voltage switch is not implemented!")
     }
 
     fn sdmmc_do_request(
