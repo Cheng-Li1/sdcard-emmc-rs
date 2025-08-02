@@ -10,7 +10,7 @@ use sdmmc_protocol::dev_log;
 use sdmmc_protocol::sdmmc::mmc_struct::{MmcBusWidth, MmcTiming};
 use sdmmc_protocol::sdmmc::sdmmc_capability::{
     MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50, MMC_TIMING_UHS_SDR12,
-    MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50, MMC_TIMING_UHS_SDR104, MMC_VDD_31_32,
+    MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50, MMC_TIMING_UHS_SDR104, MMC_VDD_165_195, MMC_VDD_29_30, MMC_VDD_30_31,
     MMC_VDD_32_33, MMC_VDD_33_34,
 };
 use sdmmc_protocol::sdmmc::{
@@ -1230,7 +1230,21 @@ impl<H: SdhciHardware> SdhciHost<H> {
         ret
     }
 
-    fn cfg_initialize(&mut self) -> u128 {
+    fn get_vdd_support(&self, caps_lo: LocalRegisterCopy<u32, CAPABILITIES_LO::Register>) -> u32 {
+        let mut ret: u32 = 0;
+        if caps_lo.is_set(CAPABILITIES_LO::VOLTAGE_SUPPORT_V3_3) {
+            ret |= MMC_VDD_32_33 | MMC_VDD_33_34;
+        }
+        if caps_lo.is_set(CAPABILITIES_LO::VOLTAGE_SUPPORT_V3_0) {
+            ret |= MMC_VDD_29_30 | MMC_VDD_30_31;
+        }
+        if caps_lo.is_set(CAPABILITIES_LO::VOLTAGE_SUPPORT_V1_8) {
+            ret |= MMC_VDD_165_195;
+        }
+        ret
+    }
+
+    fn cfg_initialize(&mut self) -> (u128, u32) {
         let hc_version = self
             .register
             .host_controller_version
@@ -1246,7 +1260,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
 
         self.host_config(host_caps_lo);
 
-        self.get_cap(host_caps_lo, host_caps_hi)
+        (self.get_cap(host_caps_lo, host_caps_hi), self.get_vdd_support(host_caps_lo))
     }
 
     fn dll_rst_ctrl(&self, reset: bool) {
@@ -1595,7 +1609,7 @@ impl<H: SdhciHardware> SdhciHost<H> {
 impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
     fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
         dev_log!("\n<init>\n");
-        let caps = self.cfg_initialize();
+        let (caps, vdd) = self.cfg_initialize();
         self.card_initialize()?;
 
         let ios: MmcIos = MmcIos {
@@ -1612,8 +1626,7 @@ impl<H: SdhciHardware> SdmmcHardware for SdhciHost<H> {
             max_frequency: CLK_400_KHZ as u64, // ???
             min_frequency: CLK_400_KHZ as u64, // ???
             max_block_per_req: 1,              // ???
-            // On odroid c4, the operating voltage is default to 3.3V
-            vdd: (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32), // ???
+            vdd,
             // TODO, figure out the correct value when we can power the card on and off
             power_delay_ms: 5,
         };
