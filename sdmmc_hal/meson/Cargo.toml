@@ -13,16 +13,8 @@ path = "lib.rs"
 # - Operating system (OS) agnostic
 # - Minimally dependent to ensure cross-platform flexibility
 #
-# Optional OS-specific crates can be included to enhance functionality, 
-# such as providing improved debugging output and more efficient sleep functions 
-# (as opposed to simple spin-wait).
-#
 # Required Dependencies:
 # - sdmmc_protocol: Essential for core functionality.
-#
-# Optional Dependencies:
-# - sel4-microkit: Provides additional support for debugging and optimized sleep functions 
-#   specifically on the seL4 microkernel platform.
 
 [dependencies]
 sdmmc_protocol = { path = "../../sdmmc_protocol" }

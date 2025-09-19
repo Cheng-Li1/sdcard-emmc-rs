@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Allow dead code for the entire module
+
 use core::ptr;
 
 use sdmmc_protocol::{
