@@ -1,4 +1,7 @@
-#![allow(dead_code)] // Allow dead code for the entire module
+// Copyright 2025, UNSW
+// SPDX-License-Identifier: BSD-2-Clause
+
+#![allow(dead_code)]
 
 use core::ptr;
 
@@ -8,8 +11,8 @@ use sdmmc_protocol::{
         HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
         SdmmcError,
         mmc_struct::{MmcBusWidth, MmcTiming},
-        sdcard::Sdcard,
-        sdmmc_capability::{
+        sd::Sdcard,
+        capability::{
             MMC_CAP_4_BIT_DATA, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32,
             MMC_VDD_32_33, MMC_VDD_33_34,
         },
@@ -18,7 +21,7 @@ use sdmmc_protocol::{
     sdmmc_traits::SdmmcHardware,
 };
 
-pub const SDIO_BASE: u64 = 0xffe05000; // Base address from DTS
+// The driver is targeting the sdmmc host controller at this address: SDIO 0xffe05000
 
 macro_rules! div_round_up {
     ($n:expr, $d:expr) => {
@@ -190,7 +193,6 @@ pub struct SdmmcMesonHardware {
     frequency: u32,
     // Irq enabled
     enabled_irq: u32,
-    // Put other variables here
 }
 
 impl SdmmcMesonHardware {
@@ -198,7 +200,6 @@ impl SdmmcMesonHardware {
         let register: &'static mut MesonSdmmcRegisters =
             unsafe { MesonSdmmcRegisters::new(sdmmc_register_base) };
 
-        // TODO: Call reset function here
         SdmmcMesonHardware {
             register,
             delay: None,

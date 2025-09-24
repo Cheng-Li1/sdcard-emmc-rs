@@ -1,4 +1,7 @@
-use super::sdcard::{EMmc, Sdcard};
+// Copyright 2025, UNSW
+// SPDX-License-Identifier: BSD-2-Clause
+
+use super::sd::{EMmc, Sdcard};
 
 // Enums for bus_width
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -61,7 +64,6 @@ pub(crate) enum MmcDevice {
     Sdcard(Sdcard),
     EMmc(EMmc),
     Unknown,
-    // TODO, when we decide to support emmc/sdio, modify this struct
 }
 
 /// Represents the different states of an SD or eMMC card.

@@ -1,3 +1,6 @@
+// Copyright 2025, UNSW
+// SPDX-License-Identifier: BSD-2-Clause
+
 use core::ptr;
 
 use sdmmc_protocol::{
@@ -125,6 +128,6 @@ impl VoltageOps for Odroidc4VoltageSwitch {
     }
 }
 
-pub unsafe fn platform_hal() -> SdmmcMesonHardware {
-    unsafe { SdmmcMesonHardware::new(meson_hal::meson_gx_mmc::SDIO_BASE) }
+pub unsafe fn platform_hal(regs_base: u64) -> SdmmcMesonHardware {
+    unsafe { SdmmcMesonHardware::new(regs_base) }
 }

@@ -46,7 +46,8 @@ fn init() -> impl Handler {
         sdmmc_protocol::sdmmc_os::set_logger(&SERIAL).unwrap();
     }
 
-    let hal = unsafe { crate::sel4_microkit_os::platform::platform_hal() };
+    // Memory addr is from the mmc.system
+    let hal = unsafe { crate::sel4_microkit_os::platform::platform_hal(0xffe05000) };
 
     // This line of code actually is very unsafe!
     // Considering the memory is stolen from the memory that has sdcard registers mapped in
