@@ -4,7 +4,7 @@
 use core::ptr;
 
 use sdmmc_protocol::{
-    sdmmc::{MmcSignalVoltage, SdmmcError},
+    sdmmc::{HostInfo, MmcSignalVoltage, SdmmcError},
     sdmmc_os::{Sleep, VoltageOps},
     sdmmc_traits::SdmmcHardware,
 };
@@ -137,4 +137,8 @@ impl VoltageOps for Odroidc4VoltageSwitch {
 
 pub unsafe fn platform_hal(regs_base: u64) -> SdmmcMesonHardware {
     unsafe { SdmmcMesonHardware::new(regs_base) }
+}
+
+pub const fn host_info() -> HostInfo {
+    SdmmcMesonHardware::HOST_INFO
 }

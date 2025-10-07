@@ -5,11 +5,11 @@
 
 # Async, OS-Agnostic SD/MMC Card Driver in Rust
 
-This repository contains an SD/MMC card driver written in pure Rust. Leveraging Rust's `async/await` features, it provides non-blocking interfaces for read, write, and erase operations.
+This repository contains an SD/MMC card driver written in pure Rust. Leveraging Rust's `async` features, it provides non-blocking interfaces for read, write, and erase operations.
 
 The driver is designed to be OS-agnostic. All platform-specific dependencies (e.g., timers, voltage control, power cycling) are provided to the driver by passing trait objects during initialization. This design allows for seamless integration into any operating system or bare-metal environment.
 
-While initially developed for [LionsOS](https://github.com/au-ts/lionsos), it can be readily adapted for other platforms.
+While developed for [LionsOS](https://github.com/au-ts/lionsos), it can be readily adapted for other OSes.
 
 **Note:** This driver is in the early stages of development and does not yet implement the full feature set found in mature stacks like the Linux MMC subsystem.
 
@@ -30,7 +30,7 @@ While initially developed for [LionsOS](https://github.com/au-ts/lionsos), it ca
 
 ---
 
-## Platform Support
+## Hardware Platform Support
 
 | Platform       | Status          |
 | :------------- | :-------------- |
@@ -39,9 +39,9 @@ While initially developed for [LionsOS](https://github.com/au-ts/lionsos), it ca
 
 ---
 
-## Adding Support for a New Platform
+## Adding Support for a New Hardware Platform
 
-Porting the driver to a new platform involves implementing the hardware-specific logic. Follow these steps:
+Porting the driver to a new hardware platform involves implementing the hardware-specific logic. Follow these steps:
 
 1.  **Familiarize Yourself:** Study the driver's architecture and review the reference implementation for the Odroid C4 to understand the core components.
 2.  **Integrate:** Add the driver as a dependency in your target OS or bare-metal environment.
