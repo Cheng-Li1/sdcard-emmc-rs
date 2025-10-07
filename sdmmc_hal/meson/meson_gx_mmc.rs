@@ -10,15 +10,15 @@ use sdmmc_protocol::{
     sdmmc::{
         HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
         SdmmcError,
-        mmc_struct::{MmcBusWidth, MmcTiming},
-        sd::Sdcard,
         capability::{
             MMC_CAP_4_BIT_DATA, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32,
             MMC_VDD_32_33, MMC_VDD_33_34,
         },
+        mmc_struct::{MmcBusWidth, MmcTiming},
+        sd::Sdcard,
     },
     sdmmc_os::{Sleep, process_wait_unreliable},
-    sdmmc_traits::SdmmcHardware,
+    sdmmc_traits::{SdmmcHardware, SdmmcOps},
 };
 
 // The driver is targeting the sdmmc host controller at this address: SDIO 0xffe05000
@@ -174,7 +174,7 @@ struct MesonSdmmcRegisters {
 impl MesonSdmmcRegisters {
     /// This function is only safe to use if the sdmmc_register_base is the correct memory addr
     /// of the sdmmc register base and accessible for the driver
-    unsafe fn new(sdmmc_register_base: u64) -> &'static mut MesonSdmmcRegisters {
+    const unsafe fn new(sdmmc_register_base: u64) -> &'static mut MesonSdmmcRegisters {
         unsafe { &mut *(sdmmc_register_base as *mut MesonSdmmcRegisters) }
     }
 }
@@ -196,21 +196,6 @@ pub struct SdmmcMesonHardware {
 }
 
 impl SdmmcMesonHardware {
-    pub unsafe fn new(sdmmc_register_base: u64) -> Self {
-        let register: &'static mut MesonSdmmcRegisters =
-            unsafe { MesonSdmmcRegisters::new(sdmmc_register_base) };
-
-        SdmmcMesonHardware {
-            register,
-            delay: None,
-            // Default uboot speed class
-            timing: MmcTiming::SdHs,
-            // Wrong value but should not have much impact
-            frequency: MESON_MIN_FREQUENCY,
-            enabled_irq: 0,
-        }
-    }
-
     /// The meson_reset function reset the host register state
     /// However, this function does not try to reset the power state like operating voltage and signal voltage
     fn meson_reset(&mut self) {
@@ -412,10 +397,8 @@ impl SdmmcMesonHardware {
     }
 }
 
-impl SdmmcHardware for SdmmcMesonHardware {
-    fn sdmmc_init(&mut self) -> Result<(MmcIos, HostInfo, u128), SdmmcError> {
-        let cap: u128 = MMC_TIMING_LEGACY | MMC_TIMING_SD_HS | MMC_TIMING_UHS | MMC_CAP_4_BIT_DATA;
-
+impl SdmmcOps for SdmmcMesonHardware {
+    fn sdmmc_init(&mut self) -> Result<MmcIos, SdmmcError> {
         // Reset host state
         self.meson_reset();
 
@@ -429,17 +412,7 @@ impl SdmmcHardware for SdmmcMesonHardware {
             spi: None,
         };
 
-        let info: HostInfo = HostInfo {
-            max_frequency: MESON_MAX_FREQUENCY as u64,
-            min_frequency: MESON_MIN_FREQUENCY as u64,
-            max_block_per_req: MAX_BLOCK_PER_TRANSFER,
-            // On odroid c4, the operating voltage is default to 3.3V
-            vdd: (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32),
-            // TODO, figure out the correct value when we can power the card on and off
-            power_delay_ms: 5,
-        };
-
-        return Ok((ios, info, cap));
+        return Ok(ios);
     }
 
     fn sdmmc_execute_tuning(
@@ -799,5 +772,34 @@ impl SdmmcHardware for SdmmcMesonHardware {
         };
 
         Ok(ios)
+    }
+}
+
+impl SdmmcHardware for SdmmcMesonHardware {
+    const HOST_INFO: HostInfo = HostInfo {
+        max_frequency: MESON_MAX_FREQUENCY as u64,
+        min_frequency: MESON_MIN_FREQUENCY as u64,
+        max_block_per_req: MAX_BLOCK_PER_TRANSFER,
+        // On odroid c4, the operating voltage is default to 3.3V
+        vdd: (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32),
+        // TODO, figure out the correct value when we can power the card on and off
+        power_delay_ms: 5,
+        host_capability: MMC_TIMING_LEGACY | MMC_TIMING_SD_HS | MMC_TIMING_UHS | MMC_CAP_4_BIT_DATA,
+    };
+
+    /// This function should be CONST!!! It is just Rust does not support it yet
+    unsafe fn new(sdmmc_register_base: u64) -> Self {
+        let register: &'static mut MesonSdmmcRegisters =
+            unsafe { MesonSdmmcRegisters::new(sdmmc_register_base) };
+
+        SdmmcMesonHardware {
+            register,
+            delay: None,
+            // Default uboot speed class
+            timing: MmcTiming::SdHs,
+            // Wrong value but should not have much impact
+            frequency: MESON_MIN_FREQUENCY,
+            enabled_irq: 0,
+        }
     }
 }

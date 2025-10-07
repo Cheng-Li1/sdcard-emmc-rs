@@ -1,9 +1,9 @@
 // Copyright 2025, UNSW
 // SPDX-License-Identifier: BSD-2-Clause
 
+pub mod capability;
 pub mod mmc_struct;
 pub mod sd;
-pub mod capability;
 
 mod constant;
 
@@ -14,12 +14,10 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
-use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming};
-use sd::{Cid, Csd, Scr, Sdcard};
 use capability::{
     MMC_CAP_4_BIT_DATA, MMC_EMPTY_CAP, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS_DDR50,
     MMC_TIMING_UHS_SDR12, MMC_TIMING_UHS_SDR25, MMC_TIMING_UHS_SDR50, MMC_TIMING_UHS_SDR104,
-    SdcardCapability, SdmmcHostCapability,
+    SdcardCapability,
 };
 use constant::{
     MMC_CMD_ALL_SEND_CID, MMC_CMD_APP_CMD, MMC_CMD_ERASE, MMC_CMD_GO_IDLE_STATE,
@@ -37,14 +35,16 @@ use constant::{
     SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR50, SD_SWITCH_FUNCTION_GROUP_ONE_SET_UHS_SDR104,
     SD_SWITCH_FUNCTION_SELECTION_GROUP_ONE,
 };
+use mmc_struct::{BlockTransmissionMode, MmcBusWidth, MmcDevice, MmcState, MmcTiming};
+use sd::{Cid, Csd, Scr, Sdcard};
 
 pub const SDCARD_DEFAULT_SECTOR_SIZE: u32 = 512;
 
 use crate::{
     dev_log,
-    sdmmc::{mmc_struct::CardInfo},
+    sdmmc::mmc_struct::CardInfo,
     sdmmc_os::{Sleep, VoltageOps},
-    sdmmc_traits::SdmmcHardware,
+    sdmmc_traits::{SdmmcHardware, SdmmcOps},
 };
 
 pub struct SdmmcCmd {
@@ -265,6 +265,18 @@ pub struct HostInfo {
     ///   power supply is stable.
     /// - This delay ensures the card is ready to respond to commands.
     pub power_delay_ms: u32,
+
+    /// The capability of the host, like the features the host supports
+    pub host_capability: u128,
+}
+
+impl HostInfo {
+    /// Zero cost function to determine if the host has a set of specific capabilities or not
+    #[inline]
+    pub const fn has_capability(&self, capability: u128) -> bool {
+        capability::SdmmcHostCapability(self.host_capability)
+            .contains(capability::SdmmcHostCapability(capability))
+    }
 }
 
 pub struct SdmmcProtocol<T: SdmmcHardware, S: Sleep, V: VoltageOps> {
@@ -275,10 +287,6 @@ pub struct SdmmcProtocol<T: SdmmcHardware, S: Sleep, V: VoltageOps> {
     voltage_ops: Option<V>,
 
     mmc_ios: MmcIos,
-
-    host_info: HostInfo,
-
-    host_capability: SdmmcHostCapability,
 
     /// This mmc device is optional because there may not always be a card in the slot!
     mmc_device: Option<MmcDevice>,
@@ -296,15 +304,13 @@ where
 
 impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
     pub fn new(mut hardware: T, sleep: S, voltage_ops: Option<V>) -> Result<Self, SdmmcError> {
-        let (ios, info, cap) = hardware.sdmmc_init()?;
+        let ios = hardware.sdmmc_init()?;
 
         Ok(SdmmcProtocol {
             hardware,
             sleep,
             voltage_ops,
             mmc_ios: ios,
-            host_info: info,
-            host_capability: SdmmcHostCapability(cap),
             mmc_device: None,
             private_memory: None,
         })
@@ -383,13 +389,9 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
             // Right now we deliberately not set XPC bit for maximum compatibility
 
             // Change this when we decide to support spi or SDSC as well
-            cmd.cmdarg |= self.host_info.vdd & 0xff8000;
+            cmd.cmdarg |= T::HOST_INFO.vdd & 0xff8000;
 
-            if voltage_switch == true
-                && self
-                    .host_capability
-                    .contains(capability::SdmmcHostCapability(MMC_TIMING_UHS_SDR12))
-            {
+            if voltage_switch == true && T::HOST_INFO.has_capability(MMC_TIMING_UHS_SDR12) {
                 cmd.cmdarg |= OCR_S18R;
                 // It seems that cards will not respond to commands that have MMC_VDD_165_195 bit set, even if the card supports UHS-I
                 // cmd.cmdarg |= MMC_VDD_165_195;
@@ -416,9 +418,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
 
         // Checking if the host and card is eligible for voltage switch
         if voltage_switch == true
-            && self
-                .host_capability
-                .contains(capability::SdmmcHostCapability(MMC_TIMING_UHS_SDR12))
+            && T::HOST_INFO.has_capability(MMC_TIMING_UHS_SDR12)
             && resp[0] & OCR_HCS == OCR_HCS
             && resp[0] & OCR_S18R == OCR_S18R
         {
@@ -468,9 +468,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         // For card initialization, we retry 2 times for each card
         // There could be more complex retry logic implemented in the future
         let res: Result<(), SdmmcError> = 'sdcard_init: {
-            let mut voltage_switch_init: bool = self
-                .host_capability
-                .contains(capability::SdmmcHostCapability(MMC_TIMING_UHS_SDR12));
+            let mut voltage_switch_init: bool = T::HOST_INFO.has_capability(MMC_TIMING_UHS_SDR12);
             let mut init_error: SdmmcError = SdmmcError::EUNSUPPORTEDCARD;
             for _ in 0..CARD_INIT_RETRY {
                 match self.sdcard_init(voltage_switch_init) {
@@ -487,7 +485,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
                             Self::sdmmc_power_cycle(
                                 &mut self.sleep,
                                 voltage_ops,
-                                self.host_info.power_delay_ms,
+                                T::HOST_INFO.power_delay_ms,
                             )?;
                         }
                         // One bug that does not break anything here is
@@ -954,9 +952,7 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         }
 
         if self.mmc_ios.bus_width == MmcBusWidth::Width1
-            && self
-                .host_capability
-                .contains(SdmmcHostCapability(MMC_CAP_4_BIT_DATA))
+            && T::HOST_INFO.has_capability(MMC_CAP_4_BIT_DATA)
         {
             // Switch data bits per transfer
             let relative_card_address: u16;
@@ -1042,43 +1038,33 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
                 match self.mmc_ios.signal_voltage {
                     MmcSignalVoltage::Voltage330 => {
                         if sdcard_cap.contains(SdcardCapability(MMC_TIMING_SD_HS))
-                            && self
-                                .host_capability
-                                .contains(SdmmcHostCapability(MMC_TIMING_SD_HS))
+                            && T::HOST_INFO.has_capability(MMC_TIMING_SD_HS)
                         {
                             target_timing = MmcTiming::SdHs;
                         }
                     }
                     MmcSignalVoltage::Voltage180 => {
                         if sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_SDR104))
-                            && self
-                                .host_capability
-                                .contains(SdmmcHostCapability(MMC_TIMING_UHS_SDR104))
+                            && T::HOST_INFO.has_capability(MMC_TIMING_UHS_SDR104)
                         {
                             target_timing = MmcTiming::UhsSdr104;
                             // If the switch speed succeed, terminate the block
                             break 'tune_speed;
                         }
                         if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_DDR50))
-                            && self
-                                .host_capability
-                                .contains(SdmmcHostCapability(MMC_TIMING_UHS_DDR50))
+                            && T::HOST_INFO.has_capability(MMC_TIMING_UHS_DDR50)
                         {
                             target_timing = MmcTiming::UhsDdr50;
                             break 'tune_speed;
                         }
                         if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_SDR50))
-                            && self
-                                .host_capability
-                                .contains(SdmmcHostCapability(MMC_TIMING_UHS_SDR50))
+                            && T::HOST_INFO.has_capability(MMC_TIMING_UHS_SDR50)
                         {
                             target_timing = MmcTiming::UhsSdr50;
                             break 'tune_speed;
                         }
                         if !sdcard_cap.contains(SdcardCapability(MMC_TIMING_UHS_SDR25))
-                            && self
-                                .host_capability
-                                .contains(SdmmcHostCapability(MMC_TIMING_UHS_SDR25))
+                            && T::HOST_INFO.has_capability(MMC_TIMING_UHS_SDR25)
                         {
                             target_timing = MmcTiming::UhsSdr25;
                             break 'tune_speed;
@@ -1413,10 +1399,6 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         }
     }
 
-    pub fn get_host_info(&mut self) -> HostInfo {
-        self.host_info.clone()
-    }
-
     pub fn print_card_info(&self) {
         if let Some(ref device) = self.mmc_device {
             match device {
@@ -1464,7 +1446,7 @@ enum CmdState {
 }
 
 pub struct SdmmcCmdFuture<'a, 'b, 'c> {
-    hardware: &'a mut dyn SdmmcHardware,
+    hardware: &'a mut dyn SdmmcOps,
     cmd: &'b SdmmcCmd,
     waker: Option<Waker>,
     state: CmdState,
@@ -1473,7 +1455,7 @@ pub struct SdmmcCmdFuture<'a, 'b, 'c> {
 
 impl<'a, 'b, 'c> SdmmcCmdFuture<'a, 'b, 'c> {
     pub fn new(
-        hardware: &'a mut dyn SdmmcHardware,
+        hardware: &'a mut dyn SdmmcOps,
         cmd: &'b SdmmcCmd,
         response: &'c mut [u32; 4],
     ) -> SdmmcCmdFuture<'a, 'b, 'c> {
@@ -1509,7 +1491,7 @@ impl<'a, 'b, 'c> Future for SdmmcCmdFuture<'a, 'b, 'c> {
                     let this: &mut SdmmcCmdFuture<'a, 'b, 'c> = self.as_mut().get_mut();
                     let cmd: &SdmmcCmd = this.cmd;
                     let response: &mut [u32; 4] = this.response;
-                    let hardware: &dyn SdmmcHardware = this.hardware;
+                    let hardware: &dyn SdmmcOps = this.hardware;
                     res = hardware.sdmmc_receive_response(cmd, response);
                 }
                 if let Err(SdmmcError::EBUSY) = res {

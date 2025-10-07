@@ -6,6 +6,7 @@ use core::ptr;
 use sdmmc_protocol::{
     sdmmc::{MmcPowerMode, MmcSignalVoltage, SdmmcError},
     sdmmc_os::VoltageOps,
+    sdmmc_traits::SdmmcHardware,
 };
 
 use meson_hal::meson_gx_mmc::SdmmcMesonHardware;
