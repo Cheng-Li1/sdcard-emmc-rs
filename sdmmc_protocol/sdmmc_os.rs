@@ -1,9 +1,9 @@
-use crate::sdmmc::MmcPowerMode;
 use crate::sdmmc::MmcSignalVoltage;
 use crate::sdmmc::SdmmcError;
 use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
+#[allow(unused_variables)]
 pub trait Sleep {
     /// For putting the process to sleep for a while,
     /// The default spinning implementation is a very unreliable way to put the process to sleep
@@ -15,12 +15,13 @@ pub trait Sleep {
     }
 }
 
+#[allow(unused_variables)]
 pub trait VoltageOps {
     fn card_voltage_switch(&mut self, voltage: MmcSignalVoltage) -> Result<(), SdmmcError> {
         core::panic!("Voltage switch not implemented!");
     }
 
-    fn card_set_power(&mut self, power_mode: MmcPowerMode) -> Result<(), SdmmcError> {
+    fn card_power_cycling(&mut self) -> Result<(), SdmmcError> {
         core::panic!("Power cycling not implemented!");
     }
 }
@@ -31,6 +32,7 @@ pub fn process_wait_unreliable(time_ns: u64) {
     }
 }
 
+#[allow(unused_variables)]
 pub trait Log {
     fn log(&self, args: core::fmt::Arguments) {
         core::panic!("Logging not implemented!");

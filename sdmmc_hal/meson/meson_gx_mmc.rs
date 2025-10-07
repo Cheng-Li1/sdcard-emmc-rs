@@ -8,8 +8,7 @@ use core::ptr;
 use sdmmc_protocol::{
     dev_log, info,
     sdmmc::{
-        HostInfo, MmcData, MmcDataFlag, MmcIos, MmcPowerMode, MmcSignalVoltage, SdmmcCmd,
-        SdmmcError,
+        HostInfo, MmcData, MmcDataFlag, MmcIos, MmcSignalVoltage, SdmmcCmd, SdmmcError,
         capability::{
             MMC_CAP_4_BIT_DATA, MMC_TIMING_LEGACY, MMC_TIMING_SD_HS, MMC_TIMING_UHS, MMC_VDD_31_32,
             MMC_VDD_32_33, MMC_VDD_33_34,
@@ -404,7 +403,6 @@ impl SdmmcOps for SdmmcMesonHardware {
 
         let ios: MmcIos = MmcIos {
             clock: MESON_MIN_FREQUENCY as u64,
-            power_mode: MmcPowerMode::On,
             bus_width: MmcBusWidth::Width1,
             signal_voltage: MmcSignalVoltage::Voltage330,
             enabled_irq: false,
@@ -763,7 +761,6 @@ impl SdmmcOps for SdmmcMesonHardware {
 
         let ios: MmcIos = MmcIos {
             clock: MESON_MIN_FREQUENCY as u64,
-            power_mode: MmcPowerMode::On,
             bus_width: MmcBusWidth::Width1,
             signal_voltage: MmcSignalVoltage::Voltage330,
             enabled_irq: false,
@@ -782,8 +779,6 @@ impl SdmmcHardware for SdmmcMesonHardware {
         max_block_per_req: MAX_BLOCK_PER_TRANSFER,
         // On odroid c4, the operating voltage is default to 3.3V
         vdd: (MMC_VDD_33_34 | MMC_VDD_32_33 | MMC_VDD_31_32),
-        // TODO, figure out the correct value when we can power the card on and off
-        power_delay_ms: 5,
         host_capability: MMC_TIMING_LEGACY | MMC_TIMING_SD_HS | MMC_TIMING_UHS | MMC_CAP_4_BIT_DATA,
     };
 

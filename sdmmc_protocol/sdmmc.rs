@@ -107,14 +107,6 @@ pub const MMC_RSP_R5: u32 = MMC_RSP_PRESENT | MMC_RSP_CRC | MMC_RSP_OPCODE;
 pub const MMC_RSP_R6: u32 = MMC_RSP_PRESENT | MMC_RSP_CRC | MMC_RSP_OPCODE;
 pub const MMC_RSP_R7: u32 = MMC_RSP_PRESENT | MMC_RSP_CRC | MMC_RSP_OPCODE;
 
-// Enums for power_mode
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum MmcPowerMode {
-    Off = 0,
-    On = 1,
-    Undefined = 2,
-}
-
 // Signal voltage
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum MmcSignalVoltage {
@@ -198,17 +190,6 @@ pub struct MmcIos {
     ///   data transfer occurs at higher rates.
     pub clock: u64,
 
-    /// The current power supply mode for the SD/MMC card.
-    ///
-    /// - This field indicates whether the card is powered on, powered off, or
-    ///   being powered up. The power mode can affect the card's internal state
-    ///   and availability for communication.
-    /// - Possible values:
-    ///   - `PowerMode::Off`: The card is completely powered off.
-    ///   - `PowerMode::Up`: The card is in the process of powering up.
-    ///   - `PowerMode::On`: The card is fully powered and ready for communication.
-    pub power_mode: MmcPowerMode,
-
     /// The width of the data bus used for communication between the host and the card.
     ///
     /// - This field specifies whether the bus operates in 1-bit, 4-bit, or 8-bit mode.
@@ -256,15 +237,6 @@ pub struct HostInfo {
     /// - Common voltage levels are 3.3V, 1.8V, and sometimes 1.2V (for eMMC).
     /// - Cards often negotiate their operating voltage during initialization.
     pub vdd: u32,
-
-    /// The power delay (in milliseconds) used after powering the card to ensure
-    /// stable operation.
-    ///
-    /// - After powering up the card, the host controller typically waits for a
-    ///   certain period before initiating communication to ensure that the card's
-    ///   power supply is stable.
-    /// - This delay ensures the card is ready to respond to commands.
-    pub power_delay_ms: u32,
 
     /// The capability of the host, like the features the host supports
     pub host_capability: u128,
@@ -430,30 +402,10 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
         Ok(())
     }
 
-    fn sdmmc_power_cycle(
-        sleep: &mut S,
-        voltage_ops: &mut V,
-        power_delay_ms: u32,
-    ) -> Result<(), SdmmcError> {
-        voltage_ops.card_set_power(MmcPowerMode::Off)?;
-
-        sleep.usleep(power_delay_ms * 1_000);
-
-        voltage_ops.card_set_power(MmcPowerMode::On)?;
-
-        sleep.usleep(power_delay_ms * 1_000);
-
-        Ok(())
-    }
-
     // Function that is not completed
     pub fn setup_card(&mut self) -> Result<(), SdmmcError> {
         // Disable all irqs here
         self.hardware.sdmmc_config_interrupt(false, false)?;
-
-        if self.mmc_ios.power_mode != MmcPowerMode::On {
-            return Err(SdmmcError::EINVAL);
-        }
 
         let clock = self.hardware.sdmmc_config_timing(MmcTiming::CardSetup)?;
 
@@ -482,11 +434,8 @@ impl<T: SdmmcHardware, S: Sleep, V: VoltageOps> SdmmcProtocol<T, S, V> {
                             // Reset the signaling voltage back to 3.3V
                             voltage_ops.card_voltage_switch(MmcSignalVoltage::Voltage330)?;
                             self.sleep.usleep(1_000);
-                            Self::sdmmc_power_cycle(
-                                &mut self.sleep,
-                                voltage_ops,
-                                T::HOST_INFO.power_delay_ms,
-                            )?;
+
+                            voltage_ops.card_power_cycling()?;
                         }
                         // One bug that does not break anything here is
                         // sdmmc_host_reset will reset the clock to CardSetup timing and turn off the irq
