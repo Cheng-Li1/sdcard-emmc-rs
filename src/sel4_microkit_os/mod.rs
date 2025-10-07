@@ -1,4 +1,7 @@
-use sdmmc_protocol::sdmmc_os::{Log, Sleep, process_wait_unreliable};
+// Copyright 2025, UNSW
+// SPDX-License-Identifier: BSD-2-Clause
+
+use sdmmc_protocol::sdmmc_os::{Log, Sleep};
 use sel4_panicking_env::__debug_print_macro_helper;
 
 #[cfg(feature = "meson")]
@@ -22,8 +25,7 @@ impl TimerOps {
 
 impl Sleep for TimerOps {
     fn usleep(&mut self, time_us: u32) {
-        process_wait_unreliable(time_us as u64 * NS_IN_US);
-        // self.timer.set_timeout(time_us as u64 * NS_IN_US);
+        sdmmc_protocol::sdmmc_os::process_wait_unreliable(time_us as u64 * NS_IN_US);
     }
 }
 

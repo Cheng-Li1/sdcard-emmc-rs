@@ -1,3 +1,8 @@
+<!--
+    Copyright 2025, UNSW
+    SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # Async, OS-Agnostic SD/MMC Card Driver in Rust
 
 This repository contains an SD/MMC card driver written in pure Rust. Leveraging Rust's `async/await` features, it provides non-blocking interfaces for read, write, and erase operations.
