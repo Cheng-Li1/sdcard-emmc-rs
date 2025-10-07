@@ -1,93 +1,55 @@
-# Generic Rust-Based SDMMC Driver
+# Async, OS-Agnostic SD/MMC Card Driver in Rust
 
-This repository contains a modular SDMMC driver written entirely in Rust, focusing on **async support**, **memory safety**, and **functional correctness**. While developed for LionsOS, the driver is designed to be **OS-agnostic** and extensible for other operating systems.
+This repository contains an SD/MMC card driver written in pure Rust. Leveraging Rust's `async/await` features, it provides non-blocking interfaces for read, write, and erase operations.
 
-I’m excited to share this driver as a unique contribution to the open-source community. It combines wide compatibility, high performance, and Rust’s safety benefits, making it a standout in its category.
+The driver is designed to be OS-agnostic. All platform-specific dependencies (e.g., timers, voltage control, power cycling) are provided to the driver by passing trait objects during initialization. This design allows for seamless integration into any operating system or bare-metal environment.
+
+While initially developed for [LionsOS](https://github.com/au-ts/lionsos), it can be readily adapted for other platforms.
+
+**Note:** This driver is in the early stages of development and does not yet implement the full feature set found in mature stacks like the Linux MMC subsystem.
 
 ---
 
 ## Features
 
-- **Modular Design**: Inspired by U-Boot and Linux, separates device-specific logic from protocol implementation, ensuring flexibility and extensibility.
-- **Wide Compatibility and High Performance**:
-  - Supports a range of SD cards, including **SDHC** and **SDXC**, with speed classes up to **UHS-I**.
-  - While Linux only added support for UHS-II in October 2024, this driver provides robust UHS-I support, ideal for embedded systems and platforms where UHS-II adoption remains limited.
-- **Memory Safety**: Utilizes Rust's strict compile-time checks and ownership model, ensuring better safety and readability compared to traditional C-based drivers.
-- **OS-Agnostic**: Designed to integrate seamlessly with LionsOS but easily portable to other operating systems.
+### Supported
+- **Card Types:** SDHC / SDXC
+- **Bus Speeds:** High Speed (SDHS) / UHS-I
+- **Core Operations:** Asynchronous Read, Write, and Erase
+
+### Not Yet Implemented or Tested
+- **Card Types:** SDSC / SDUC, eMMC
+- **Interface Modes:** SPI mode
+- **Bus Speeds:** Speed classes higher than UHS-I (e.g., UHS-II, UHS-III)
+- A comprehensive set of features found in mature MMC stacks.
 
 ---
 
-## Supported Hardware Platforms
+## Platform Support
 
-- **Odroid C4**: Currently, the driver supports and has been tested on the Odroid C4 platform.
-- **Adding Support**: Thanks to the modular design, adding support for additional platforms is straightforward by implementing the hardware abstraction layer for the new platform.
-
----
-
-## Current Status
-
-The driver is currently in the **final stages of development for its first iteration**:
-- Core functionality has been fully implemented.
-- Performance is comparable to Linux's SDMMC subsystem, with support for speed classes up to **UHS-I**.
-- Code refinements and documentation updates are ongoing.
-- **Expected Milestone**: Public release and merging into LionsOS main branch by February 2025.
+| Platform       | Status          |
+| :------------- | :-------------- |
+| Odroid C4      | ✅ Supported    |
+| sdhci-zynqmp   | 🚧 In Progress  |
 
 ---
 
-## Driver Structure
+## Adding Support for a New Platform
 
-The driver is organized into the following components:
+Porting the driver to a new platform involves implementing the hardware-specific logic. Follow these steps:
 
-1. **`sdmmc_hal` Folder**:
-   - Contains the hardware abstraction layer for different platforms.
-   - To add support for a new platform, implement the necessary hardware-specific interfaces here.
-
-2. **`sdmmc_protocol` Folder**:
-   - Implements the SD card protocol using the hardware abstraction layer.
-   - Modify this layer to add new protocol features (e.g., hotplugging or eMMC support).
-
-3. **`optional_os_support` Folder**:
-   - Provides OS-specific utilities such as optimized wait/sleep operations(instead of spinning waiting) or printing debug messages to the terminal.
-   - Modify this layer to provide support for a new OS
+1.  **Familiarize Yourself:** Study the driver's architecture and review the reference implementation for the Odroid C4 to understand the core components.
+2.  **Integrate:** Add the driver as a dependency in your target OS or bare-metal environment.
+3.  **Implement the HAL:** Create a new hardware abstraction layer (HAL) for your platform by implementing the `SdmmcHardware` trait. This trait defines the interface for all hardware-specific operations.
+4.  **Build with Logging:** Compile your HAL and the core protocol crate with the `dev-logs` feature enabled to get detailed diagnostic output.
+5.  **Test and Verify:** Run the driver on your hardware. Analyze the logs to verify that the initialization sequence and command responses are correct.
 
 ---
 
-## Usage and Examples
+## Design Philosophy
+The driver's architecture is heavily inspired by the Linux and U-Boot MMC subsystems, which separate the platform-agnostic SD/MMC protocol logic from the platform-specific host controller driver (HAL). This separation significantly simplifies porting the driver to new hardware, as developers only need to implement the `SdmmcHardware` trait.
 
-Usage instructions and examples will be added soon. Stay tuned!
-
----
-
-## Why Rust?
-
-Rust provides unmatched safety and performance benefits for driver development:
-- **Memory Safety**: Prevents common bugs like null pointer dereferences and buffer overflows.
-- **Async Support**: Enables efficient, non-blocking I/O operations.
-- **Readable and Extensible**: Rust’s modern syntax and tooling make the driver easier to understand and maintain compared to traditional C-based implementations.
+Unlike traditional Linux drivers that are tightly coupled with kernel APIs, this driver achieves OS-agnosticism through dependency injection. All OS-dependent services are passed into the driver's initialization function as trait objects. This design ensures maximum portability and makes the driver suitable for a wide range of operating systems and bare-metal applications.
 
 ---
-
-## Future Plans
-
-- Expand hardware support to additional platforms.
-- Add support for legacy SDSC cards and the latest SDUC cards (though they may have limited use cases).
-- Add hotplugging and eMMC support.
-- Publish detailed usage examples and benchmarks.
-
----
-
-## Contributing
-
-Contributions are welcome! Feel free to open issues or submit pull requests to improve functionality, expand platform support, or enhance documentation.
-
----
-
-## License
-
-The license for this work will be added upon the first public release. The project is developed as part of my work at Trustworthy Systems, UNSW, so the copyright may reside with the university. Clarifications about licensing are ongoing.
-
----
-
-## Related Links
-
-- [LionsOS GitHub Repository](https://github.com/au-ts/lionsos)
+*This README was authored by the project maintainer and refined for clarity with assistance from Google's Gemini. All technical information was written and verified by the author.*
