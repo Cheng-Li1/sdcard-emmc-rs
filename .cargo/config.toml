@@ -1,0 +1,11 @@
+[build]
+target = "support/targets/aarch64-sel4-microkit-minimal.json"
+
+[unstable]
+build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
+
+[env]
+SEL4_INCLUDE_DIRS = "/home/cheng/system/microkit-sdk-2.0.1/board/odroidc4/debug/include"
+
+[target."aarch64-sel4-microkit-minimal"]

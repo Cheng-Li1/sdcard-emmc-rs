@@ -46,8 +46,6 @@ pub trait SdmmcOps {
     ///   - `DAT0` corresponds to the least significant bit (LSB).
     ///   - `DAT7` corresponds to the most significant bit (MSB).
     ///
-    /// Note:
-    /// - This function is not yet implemented and currently returns an `ENOTIMPLEMENTED` error.
     fn sdmmc_read_datalanes(&self) -> Result<u8, SdmmcError> {
         Err(SdmmcError::ENOTIMPLEMENTED)
     }
